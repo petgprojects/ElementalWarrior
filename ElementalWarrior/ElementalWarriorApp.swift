@@ -13,21 +13,14 @@ struct ElementalWarriorApp: App {
     @State private var appModel = AppModel()
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environment(appModel)
+        WindowGroup(id: "home") {
+            HomeView()
         }
+        .windowStyle(.plain)
 
-        ImmersiveSpace(id: appModel.immersiveSpaceID) {
-            ImmersiveView()
-                .environment(appModel)
-                .onAppear {
-                    appModel.immersiveSpaceState = .open
-                }
-                .onDisappear {
-                    appModel.immersiveSpaceState = .closed
-                }
+        ImmersiveSpace(id: "arena") {
+            ArenaImmersiveView()
         }
-        .immersionStyle(selection: .constant(.full), in: .full)
+        .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }
 }

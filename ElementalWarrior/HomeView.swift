@@ -9,11 +9,13 @@ import SwiftUI
 import RealityKit
 
 struct HomeView: View {
+    
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
-    
+
     var body: some View {
-        ZStack(alignment: .top) {
+        // Use a 3D layout container so RealityView doesn't push the 2D content forward.
+        VStackLayout().depthAlignment(.front) {
             // Fireball rendered inside the same window scene
             RealityView { content in
                 let root = Entity()
@@ -40,17 +42,20 @@ struct HomeView: View {
                 root.addChild(sphere)
                 root.addChild(light)
 
-                // Place the fireball slightly in front
+                // Keep the entity centered in the view
                 root.position = [0, 0, 0]
 
                 content.add(root)
             }
-            .frame(height: 180)
-            .padding(.top, 10)
-            .offset(z: 60)
+            .frame(height: 120)
+            // Make the RealityView effectively planar so it doesn't consume window depth.
+            .frame(depth: 0.001, alignment: .front)
+            .padding(.top, 24)
+//            .offset(y: 30)
             .allowsHitTesting(false)
 
-            // Existing UI
+            Color.clear.frame(height: 12)
+
             VStack(spacing: 16) {
                 Text("Welcome to Elemental Warrior")
                     .font(.largeTitle)
@@ -76,7 +81,7 @@ struct HomeView: View {
                     .buttonStyle(.bordered)
                 }
             }
-            .padding(.top, 160)
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(32)
         }
     }

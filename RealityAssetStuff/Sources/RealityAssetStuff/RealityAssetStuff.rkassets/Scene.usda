@@ -299,7 +299,7 @@ def Xform "Root"
             float2 ui:nodegraph:node:pos = (170, 305)
             int ui:nodegraph:node:stackingOrder = 1
             quatf xformOp:orient = (1, 0, 0, 0)
-            float3 xformOp:scale = (1.7500001, 1.7500001, 1.7500001)
+            float3 xformOp:scale = (1.2, 1.2, 1.2)
             float3 xformOp:translate = (0, 0, 0)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 

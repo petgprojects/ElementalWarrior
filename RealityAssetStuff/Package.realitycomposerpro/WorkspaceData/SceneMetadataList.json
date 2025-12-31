@@ -1,0 +1,113 @@
+{
+  "5A3BCFDC-8051-4D0E-819E-9FB4DED30258" : {
+    "objectMetadataList" : [
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "Sphere",
+        "DefaultMaterial"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballSpikes",
+        "FireballSpikesMaterial"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "BadSpikes2"
+      ],
+      {
+        "disallowsFraming" : false,
+        "isExpanded" : false,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "BadSpikes2",
+        "DefaultMaterial"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballCore",
+        "FireballFlame"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballCore",
+        "FireballCoreMaterial"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballFlame",
+        "FireballFlameMaterial"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballCore"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "Sphere"
+      ],
+      {
+        "disallowsFraming" : false,
+        "isExpanded" : false,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballSpikes"
+      ],
+      {
+        "disallowsFraming" : true,
+        "isExpanded" : true,
+        "isLocked" : false
+      }
+    ]
+  }
+}

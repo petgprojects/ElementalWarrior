@@ -26,7 +26,7 @@ final class RotationSystem: System {
     func update(context: SceneUpdateContext) {
         let dt = Float(context.deltaTime)
         context.scene.performQuery( EntityQuery(where: .has(RotationComponent.self)) ).forEach { entity in
-            guard let c = entity.components[RotationComponent.self] as? RotationComponent else { return }
+            guard let c = entity.components[RotationComponent.self] else { return }
             entity.transform.rotation *= simd_quatf(angle: c.speed * dt, axis: [0, 1, 0])
         }
     }

@@ -191,9 +191,18 @@ final class HandTrackingManager {
         leftHandState.isShowingFireball = false
         leftHandState.isAnimating = false
 
-        // Remove smoke puff after it dissipates
-        try? await Task.sleep(for: .milliseconds(1500))
-        smokePuff.removeFromParent()
+        // Stop emitter after short burst, let particles fade naturally
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))  // Brief burst
+            // Stop emitting new particles
+            if var emitter = smokePuff.components[ParticleEmitterComponent.self] {
+                emitter.mainEmitter.birthRate = 0
+                smokePuff.components.set(emitter)
+            }
+            // Wait for existing particles to fade (2s lifespan + buffer)
+            try? await Task.sleep(for: .milliseconds(2300))
+            smokePuff.removeFromParent()
+        }
     }
 
     private func extinguishRight() async {
@@ -221,9 +230,18 @@ final class HandTrackingManager {
         rightHandState.isShowingFireball = false
         rightHandState.isAnimating = false
 
-        // Remove smoke puff after it dissipates
-        try? await Task.sleep(for: .milliseconds(1500))
-        smokePuff.removeFromParent()
+        // Stop emitter after short burst, let particles fade naturally
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))  // Brief burst
+            // Stop emitting new particles
+            if var emitter = smokePuff.components[ParticleEmitterComponent.self] {
+                emitter.mainEmitter.birthRate = 0
+                smokePuff.components.set(emitter)
+            }
+            // Wait for existing particles to fade (2s lifespan + buffer)
+            try? await Task.sleep(for: .milliseconds(2300))
+            smokePuff.removeFromParent()
+        }
     }
 
     private func forceExtinguishLeft() async {
@@ -233,9 +251,16 @@ final class HandTrackingManager {
             rootEntity.addChild(smokePuff)
             fireball.removeFromParent()
 
-            // Remove smoke puff after dissipation
+            // Stop emitter after short burst, let particles fade naturally
             Task {
-                try? await Task.sleep(for: .milliseconds(1500))
+                try? await Task.sleep(for: .milliseconds(150))  // Brief burst
+                // Stop emitting new particles
+                if var emitter = smokePuff.components[ParticleEmitterComponent.self] {
+                    emitter.mainEmitter.birthRate = 0
+                    smokePuff.components.set(emitter)
+                }
+                // Wait for existing particles to fade (2s lifespan + buffer)
+                try? await Task.sleep(for: .milliseconds(2300))
                 smokePuff.removeFromParent()
             }
         }
@@ -249,9 +274,16 @@ final class HandTrackingManager {
             rootEntity.addChild(smokePuff)
             fireball.removeFromParent()
 
-            // Remove smoke puff after dissipation
+            // Stop emitter after short burst, let particles fade naturally
             Task {
-                try? await Task.sleep(for: .milliseconds(1500))
+                try? await Task.sleep(for: .milliseconds(150))  // Brief burst
+                // Stop emitting new particles
+                if var emitter = smokePuff.components[ParticleEmitterComponent.self] {
+                    emitter.mainEmitter.birthRate = 0
+                    smokePuff.components.set(emitter)
+                }
+                // Wait for existing particles to fade (2s lifespan + buffer)
+                try? await Task.sleep(for: .milliseconds(2300))
                 smokePuff.removeFromParent()
             }
         }
@@ -268,25 +300,25 @@ final class HandTrackingManager {
     private func createSmokePuffEmitter() -> ParticleEmitterComponent {
         var emitter = ParticleEmitterComponent()
         emitter.emitterShape = .sphere
-        emitter.emitterShapeSize = [0.08, 0.08, 0.08]
+        emitter.emitterShapeSize = [0.06, 0.06, 0.06]  // Slightly smaller emitter area
 
-        // Burst of smoke - high initial rate that stops
-        emitter.mainEmitter.birthRate = 300
-        emitter.mainEmitter.lifeSpan = 1.2
-        emitter.mainEmitter.lifeSpanVariation = 0.4
+        // Reduced smoke - 1/4 of previous amount
+        emitter.mainEmitter.birthRate = 100  // Was 400
+        emitter.mainEmitter.lifeSpan = 2.0  // 2 second gradual fade
+        emitter.mainEmitter.lifeSpanVariation = 0.3
 
-        emitter.speed = 0.15
-        emitter.speedVariation = 0.08
-        emitter.mainEmitter.acceleration = [0, 0.2, 0]
+        emitter.speed = 0.12
+        emitter.speedVariation = 0.06
+        emitter.mainEmitter.acceleration = [0, 0.18, 0]  // Rise gently
 
-        emitter.mainEmitter.size = 0.05
-        emitter.mainEmitter.sizeVariation = 0.02
-        emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 4.0
+        emitter.mainEmitter.size = 0.04
+        emitter.mainEmitter.sizeVariation = 0.015
+        emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 3.5  // Expand as it fades
 
-        // Gray smoke
+        // Gray smoke - gradual alpha fade from visible to zero over 2 seconds
         emitter.mainEmitter.color = .evolving(
-            start: .single(.init(red: 0.35, green: 0.3, blue: 0.25, alpha: 0.7)),
-            end: .single(.init(red: 0.2, green: 0.18, blue: 0.15, alpha: 0.0))
+            start: .single(.init(red: 0.4, green: 0.35, blue: 0.3, alpha: 0.8)),
+            end: .single(.init(red: 0.25, green: 0.22, blue: 0.18, alpha: 0.0))
         )
         emitter.mainEmitter.blendMode = .alpha
 
@@ -632,23 +664,25 @@ final class HandTrackingManager {
     private func createSmokeParticles() -> ParticleEmitterComponent {
         var emitter = ParticleEmitterComponent()
         emitter.emitterShape = .sphere
-        emitter.emitterShapeSize = [0.035, 0.035, 0.035]
+        emitter.emitterShapeSize = [0.04, 0.04, 0.04]
 
-        emitter.mainEmitter.birthRate = 80
-        emitter.mainEmitter.lifeSpan = 0.9
-        emitter.mainEmitter.lifeSpanVariation = 0.25
+        // More visible continuous smoke rising from active fireball
+        emitter.mainEmitter.birthRate = 150
+        emitter.mainEmitter.lifeSpan = 2.0  // 2 second fade
+        emitter.mainEmitter.lifeSpanVariation = 0.4
 
-        emitter.speed = 0.05
-        emitter.speedVariation = 0.02
-        emitter.mainEmitter.acceleration = [0, 0.08, 0]
+        emitter.speed = 0.08
+        emitter.speedVariation = 0.03
+        emitter.mainEmitter.acceleration = [0, 0.15, 0]  // Rise upward
 
-        emitter.mainEmitter.size = 0.018
-        emitter.mainEmitter.sizeVariation = 0.006
-        emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 3.0
+        emitter.mainEmitter.size = 0.025
+        emitter.mainEmitter.sizeVariation = 0.01
+        emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 3.5  // Expand as it rises
 
+        // Gradual fade from visible to transparent over lifespan
         emitter.mainEmitter.color = .evolving(
-            start: .single(.init(red: 0.2, green: 0.15, blue: 0.1, alpha: 0.4)),
-            end: .single(.init(red: 0.1, green: 0.08, blue: 0.05, alpha: 0.0))
+            start: .single(.init(red: 0.3, green: 0.25, blue: 0.2, alpha: 0.6)),
+            end: .single(.init(red: 0.15, green: 0.12, blue: 0.1, alpha: 0.0))
         )
         emitter.mainEmitter.blendMode = .alpha
         return emitter

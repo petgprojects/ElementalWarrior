@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important: Keep Documentation Updated
+
+**CRITICAL**: Whenever you make significant changes to the codebase, you MUST update the README.md to reflect those changes. This includes:
+- Adding new features or functionality
+- Changing existing behavior or architecture
+- Completing items from the development roadmap
+- Removing or refactoring major components
+- Fixing significant bugs that affect user experience
+
+Always check if the README accurately reflects the current state of the project after your work is complete.
+
 ## Project Overview
 
 Elemental Warrior is a VisionOS immersive experience inspired by Avatar: The Last Airbender. Players use hand gestures to control elemental bending and battle AI opponents in mixed reality.

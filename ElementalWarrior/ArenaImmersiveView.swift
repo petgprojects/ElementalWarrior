@@ -58,7 +58,7 @@ final class HandTrackingManager {
 
     private func loadFireballTemplate() async {
         fireballTemplate = await MainActor.run {
-            createRealisticFireball()
+            createRealisticFireball(scale: 0.7)
         }
         print("Fireball template created programmatically")
     }

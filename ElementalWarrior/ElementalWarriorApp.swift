@@ -17,6 +17,7 @@ struct ElementalWarriorApp: App {
             HomeView()
         }
         .windowStyle(.plain)
+        .defaultSize(width: 1000, height: 1000)
 
         ImmersiveSpace(id: "arena") {
             ArenaImmersiveView()

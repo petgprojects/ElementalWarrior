@@ -342,10 +342,14 @@ final class HandTrackingManager {
         // For the wrist, the -Z axis typically points from wrist towards fingers
         // and the Y axis points out of the back of the hand
         // So we want -Y axis (palm side) to point up
+        // LEFT and RIGHT hands have mirrored coordinate systems, so we need to flip the sign for left hands
+        let isLeftHand = anchor.chirality == .left
+        let yAxisMultiplier: Float = isLeftHand ? 1.0 : -1.0
+
         let palmNormal = SIMD3<Float>(
-            -worldWristTransform.columns.1.x,
-            -worldWristTransform.columns.1.y,
-            -worldWristTransform.columns.1.z
+            yAxisMultiplier * worldWristTransform.columns.1.x,
+            yAxisMultiplier * worldWristTransform.columns.1.y,
+            yAxisMultiplier * worldWristTransform.columns.1.z
         )
 
         let worldUp = SIMD3<Float>(0, 1, 0)

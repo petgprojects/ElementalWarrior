@@ -168,17 +168,28 @@ final class HandTrackingManager {
         // Get position for smoke puff
         let position = fireball.position
 
-        // Quickly shrink the fireball
-        var transform = fireball.transform
-        transform.scale = [0.01, 0.01, 0.01]
-        fireball.move(to: transform, relativeTo: fireball.parent, duration: 0.1, timingFunction: .easeIn)
-
-        // Spawn smoke puff at the same location
+        // Spawn smoke puff at the same location, starting effectively invisible
         let smokePuff = createSmokePuff()
         smokePuff.position = position
+        smokePuff.scale = [0.01, 0.01, 0.01]
         rootEntity.addChild(smokePuff)
 
-        try? await Task.sleep(for: .milliseconds(100))
+        // Animate transition: Fireball shrinks, Smoke grows
+        // User requested ~0.25s duration with linear cross-fade
+        let duration = 0.25
+        
+        // Shrink fireball to zero
+        var fireTransform = fireball.transform
+        fireTransform.scale = [0.001, 0.001, 0.001]
+        fireball.move(to: fireTransform, relativeTo: fireball.parent, duration: duration, timingFunction: .linear)
+        
+        // Grow smoke to full size
+        var smokeTransform = smokePuff.transform
+        smokeTransform.scale = [1.0, 1.0, 1.0]
+        smokePuff.move(to: smokeTransform, relativeTo: smokePuff.parent, duration: duration, timingFunction: .linear)
+
+        // Wait for transition + small buffer to ensure animation completes
+        try? await Task.sleep(for: .milliseconds(Int(duration * 1000) + 50))
 
         fireball.removeFromParent()
         leftHandState.fireball = nil
@@ -187,14 +198,14 @@ final class HandTrackingManager {
 
         // Stop emitter after short burst, let particles fade naturally
         Task {
-            try? await Task.sleep(for: .milliseconds(150))  // Brief burst
+            try? await Task.sleep(for: .milliseconds(100))
             // Stop emitting new particles
             if var emitter = smokePuff.components[ParticleEmitterComponent.self] {
                 emitter.mainEmitter.birthRate = 0
                 smokePuff.components.set(emitter)
             }
-            // Wait for existing particles to fade (2s lifespan + buffer)
-            try? await Task.sleep(for: .milliseconds(2300))
+            // Wait for existing particles to fade
+            try? await Task.sleep(for: .milliseconds(2500))
             smokePuff.removeFromParent()
         }
     }
@@ -207,17 +218,28 @@ final class HandTrackingManager {
         // Get position for smoke puff
         let position = fireball.position
 
-        // Quickly shrink the fireball
-        var transform = fireball.transform
-        transform.scale = [0.01, 0.01, 0.01]
-        fireball.move(to: transform, relativeTo: fireball.parent, duration: 0.1, timingFunction: .easeIn)
-
-        // Spawn smoke puff at the same location
+        // Spawn smoke puff at the same location, starting effectively invisible
         let smokePuff = createSmokePuff()
         smokePuff.position = position
+        smokePuff.scale = [0.01, 0.01, 0.01]
         rootEntity.addChild(smokePuff)
 
-        try? await Task.sleep(for: .milliseconds(100))
+        // Animate transition: Fireball shrinks, Smoke grows
+        // User requested ~0.25s duration with linear cross-fade
+        let duration = 0.25
+        
+        // Shrink fireball to zero
+        var fireTransform = fireball.transform
+        fireTransform.scale = [0.001, 0.001, 0.001]
+        fireball.move(to: fireTransform, relativeTo: fireball.parent, duration: duration, timingFunction: .linear)
+        
+        // Grow smoke to full size
+        var smokeTransform = smokePuff.transform
+        smokeTransform.scale = [1.0, 1.0, 1.0]
+        smokePuff.move(to: smokeTransform, relativeTo: smokePuff.parent, duration: duration, timingFunction: .linear)
+
+        // Wait for transition + small buffer to ensure animation completes
+        try? await Task.sleep(for: .milliseconds(Int(duration * 1000) + 50))
 
         fireball.removeFromParent()
         rightHandState.fireball = nil
@@ -226,14 +248,14 @@ final class HandTrackingManager {
 
         // Stop emitter after short burst, let particles fade naturally
         Task {
-            try? await Task.sleep(for: .milliseconds(150))  // Brief burst
+            try? await Task.sleep(for: .milliseconds(100))
             // Stop emitting new particles
             if var emitter = smokePuff.components[ParticleEmitterComponent.self] {
                 emitter.mainEmitter.birthRate = 0
                 smokePuff.components.set(emitter)
             }
-            // Wait for existing particles to fade (2s lifespan + buffer)
-            try? await Task.sleep(for: .milliseconds(2300))
+            // Wait for existing particles to fade
+            try? await Task.sleep(for: .milliseconds(2500))
             smokePuff.removeFromParent()
         }
     }
@@ -294,24 +316,31 @@ final class HandTrackingManager {
     private func createSmokePuffEmitter() -> ParticleEmitterComponent {
         var emitter = ParticleEmitterComponent()
         emitter.emitterShape = .sphere
-        emitter.emitterShapeSize = [0.06, 0.06, 0.06]  // Slightly smaller emitter area
+        // Start small, let it expand via entity scaling and particle movement
+        emitter.emitterShapeSize = [0.025, 0.025, 0.025]
 
-        // Reduced smoke - 1/4 of previous amount
-        emitter.mainEmitter.birthRate = 100  // Was 400
-        emitter.mainEmitter.lifeSpan = 2.0  // 2 second gradual fade
-        emitter.mainEmitter.lifeSpanVariation = 0.3
+        // High birth rate for instant fill
+        emitter.mainEmitter.birthRate = 2000
+        emitter.mainEmitter.lifeSpan = 2.0
+        emitter.mainEmitter.lifeSpanVariation = 0.5
 
-        emitter.speed = 0.12
-        emitter.speedVariation = 0.06
-        emitter.mainEmitter.acceleration = [0, 0.18, 0]  // Rise gently
+        // More chaotic movement
+        emitter.speed = 0.05
+        emitter.speedVariation = 0.04
+        emitter.mainEmitter.acceleration = [0, 0.05, 0]  // Rise gently
+        
+        // Add noise for organic feel
+        emitter.mainEmitter.noiseStrength = 0.1
+        emitter.mainEmitter.noiseAnimationSpeed = 0.5
+        emitter.mainEmitter.noiseScale = 1.0
 
-        emitter.mainEmitter.size = 0.04
-        emitter.mainEmitter.sizeVariation = 0.015
-        emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 3.5  // Expand as it fades
+        emitter.mainEmitter.size = 0.01
+        emitter.mainEmitter.sizeVariation = 0.005
+        emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 2.0
 
-        // Gray smoke - gradual alpha fade from visible to zero over 2 seconds
+        // Gray smoke - gradual alpha fade
         emitter.mainEmitter.color = .evolving(
-            start: .single(.init(red: 0.4, green: 0.35, blue: 0.3, alpha: 0.8)),
+            start: .single(.init(red: 0.4, green: 0.35, blue: 0.3, alpha: 0.5)),
             end: .single(.init(red: 0.25, green: 0.22, blue: 0.18, alpha: 0.0))
         )
         emitter.mainEmitter.blendMode = .alpha

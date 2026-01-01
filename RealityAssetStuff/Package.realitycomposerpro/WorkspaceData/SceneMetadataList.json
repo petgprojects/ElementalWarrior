@@ -4,45 +4,17 @@
       [
         "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
         "Root",
+        "FireballSpikes"
+      ],
+      {
+        "disallowsFraming" : true,
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
         "Sphere",
-        "DefaultMaterial"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
-        "Root"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
-        "Root",
-        "FireballSpikes",
-        "FireballSpikesMaterial"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
-        "Root",
-        "BadSpikes2"
-      ],
-      {
-        "disallowsFraming" : false,
-        "isExpanded" : false,
-        "isLocked" : false
-      },
-      [
-        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
-        "Root",
-        "BadSpikes2",
         "DefaultMaterial"
       ],
       {
@@ -62,16 +34,6 @@
       [
         "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
         "Root",
-        "FireballCore",
-        "FireballCoreMaterial"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
-        "Root",
         "FireballFlame",
         "FireballFlameMaterial"
       ],
@@ -82,7 +44,8 @@
       [
         "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
         "Root",
-        "FireballCore"
+        "FireballSpikes",
+        "FireballSpikesMaterial"
       ],
       {
         "isExpanded" : true,
@@ -100,14 +63,56 @@
       },
       [
         "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
-        "Root",
-        "FireballSpikes"
+        "Root"
       ],
       {
-        "disallowsFraming" : true,
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "BadSpikes2"
+      ],
+      {
+        "disallowsFraming" : false,
+        "isExpanded" : false,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballCore",
+        "FireballCoreMaterial"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "BadSpikes2",
+        "DefaultMaterial"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+        "Root",
+        "FireballCore"
+      ],
+      {
         "isExpanded" : true,
         "isLocked" : false
       }
+    ]
+  },
+  "762CA1B5-1B2B-4401-ABD8-AEEF1E2AFCE0" : {
+    "objectMetadataList" : [
+
     ]
   }
 }

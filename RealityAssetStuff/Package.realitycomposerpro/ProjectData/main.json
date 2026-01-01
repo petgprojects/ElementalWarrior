@@ -1,11 +1,13 @@
 {
   "pathsToIds" : {
     "\/RealityAssetStuff\/Sources\/RealityAssetStuff\/RealityAssetStuff.rkassets\/Fireball.usda" : "4CA00EA4-398E-49B5-BBA0-FFE56E8AE721",
-    "\/RealityAssetStuff\/Sources\/RealityAssetStuff\/RealityAssetStuff.rkassets\/Scene.usda" : "5A3BCFDC-8051-4D0E-819E-9FB4DED30258"
+    "\/RealityAssetStuff\/Sources\/RealityAssetStuff\/RealityAssetStuff.rkassets\/Scene.usda" : "5A3BCFDC-8051-4D0E-819E-9FB4DED30258",
+    "RealityAssetStuff\/Sources\/RealityAssetStuff\/RealityAssetStuff.rkassets\/Scene.usda" : "762CA1B5-1B2B-4401-ABD8-AEEF1E2AFCE0"
   },
   "projectID" : 284194726268090912,
   "uuidToIntID" : {
     "4CA00EA4-398E-49B5-BBA0-FFE56E8AE721" : 9154243296671554753,
-    "5A3BCFDC-8051-4D0E-819E-9FB4DED30258" : -2424238619192258162
+    "5A3BCFDC-8051-4D0E-819E-9FB4DED30258" : -2424238619192258162,
+    "762CA1B5-1B2B-4401-ABD8-AEEF1E2AFCE0" : -621423934723347257
   }
 }

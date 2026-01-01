@@ -19,7 +19,7 @@ struct HomeView: View {
                 let fireball = await createFireball()
                 content.add(fireball)
             }
-            .frame(height: 400)
+            .frame(height: 700)
             .frame(depth: 0.001, alignment: .front)
             .padding(.top, 24)
             .allowsHitTesting(false)
@@ -59,6 +59,7 @@ struct HomeView: View {
     private func createFireball() async -> Entity {
         let fireball = await MainActor.run {
             let entity = createRealisticFireball(scale: 1.5)
+            entity.position.y = -0.2
             return entity
         }
         return fireball

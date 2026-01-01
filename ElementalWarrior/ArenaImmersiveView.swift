@@ -57,16 +57,10 @@ final class HandTrackingManager {
     }
 
     private func loadFireballTemplate() async {
-        if let url = Bundle.main.url(forResource: "Fireball", withExtension: "usdz") {
-            do {
-                fireballTemplate = try await Entity(contentsOf: url)
-                print("Fireball template loaded successfully")
-            } catch {
-                print("Failed to load Fireball.usdz: \(error)")
-            }
-        } else {
-            print("Fireball.usdz not found in bundle")
+        fireballTemplate = await MainActor.run {
+            createRealisticFireball()
         }
+        print("Fireball template created programmatically")
     }
 
     private func processHandUpdates() async {

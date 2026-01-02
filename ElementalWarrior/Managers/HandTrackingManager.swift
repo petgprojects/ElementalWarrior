@@ -29,6 +29,7 @@ struct ProjectileState {
     let startTime: TimeInterval
     let speed: Float
     var trailEntity: Entity?
+    var previousPosition: SIMD3<Float>  // Track previous position for raycast collision
 }
 
 // MARK: - Hand Tracking Manager
@@ -49,6 +50,9 @@ final class HandTrackingManager {
 
     // Active projectiles in flight
     private var activeProjectiles: [UUID: ProjectileState] = [:]
+    
+    // Scene mesh anchors for collision detection
+    private var sceneMeshAnchors: [UUID: MeshAnchor] = [:]
 
     // MARK: - Timing Constants
 
@@ -937,7 +941,8 @@ final class HandTrackingManager {
             startPosition: startPos,
             startTime: CACurrentMediaTime(),
             speed: projectileSpeed,
-            trailEntity: trail
+            trailEntity: trail,
+            previousPosition: startPos  // Initialize previous position for collision detection
         )
 
         print("Launched fireball from \(hand) in direction \(direction)")
@@ -951,6 +956,7 @@ final class HandTrackingManager {
 
             let currentTime = CACurrentMediaTime()
             var projectilesToRemove: [UUID] = []
+            var projectilesToUpdate: [(UUID, SIMD3<Float>)] = []
 
             for (id, projectile) in activeProjectiles {
                 let elapsed = Float(currentTime - projectile.startTime)
@@ -963,12 +969,30 @@ final class HandTrackingManager {
                 }
 
                 let newPosition = projectile.startPosition + projectile.direction * travelDistance
-                projectile.entity.position = newPosition
-
-                if checkProjectileCollision(projectilePosition: newPosition) {
-                    await triggerExplosion(at: newPosition, projectileID: id)
+                
+                // Check for collision with real-world surfaces using raycast
+                if let hitPoint = checkProjectileCollision(
+                    projectilePosition: newPosition,
+                    direction: projectile.direction,
+                    previousPosition: projectile.previousPosition
+                ) {
+                    // Explode at the exact hit point
+                    await triggerExplosion(at: hitPoint, projectileID: id)
                     projectilesToRemove.append(id)
+                    print("Fireball hit real-world surface at \(hitPoint)")
                     continue
+                }
+                
+                // Update entity position and track for next frame
+                projectile.entity.position = newPosition
+                projectilesToUpdate.append((id, newPosition))
+            }
+
+            // Update previous positions for next frame's collision checks
+            for (id, newPosition) in projectilesToUpdate {
+                if var projectile = activeProjectiles[id] {
+                    projectile.previousPosition = newPosition
+                    activeProjectiles[id] = projectile
                 }
             }
 
@@ -988,6 +1012,9 @@ final class HandTrackingManager {
 
             switch update.event {
             case .added, .updated:
+                // Store the mesh anchor for collision detection
+                sceneMeshAnchors[anchor.id] = anchor
+                
                 let collisionEntity = await createCollisionMesh(from: anchor)
                 if let existing = rootEntity.findEntity(named: "SceneMesh_\(anchor.id)") {
                     existing.removeFromParent()
@@ -996,6 +1023,7 @@ final class HandTrackingManager {
                 rootEntity.addChild(collisionEntity)
 
             case .removed:
+                sceneMeshAnchors.removeValue(forKey: anchor.id)
                 if let existing = rootEntity.findEntity(named: "SceneMesh_\(anchor.id)") {
                     existing.removeFromParent()
                 }
@@ -1028,22 +1056,184 @@ final class HandTrackingManager {
     // MARK: - Collision Handling
 
     private func setupCollisionHandling() async {
-        // Collision is handled in updateProjectiles via distance checks
+        // Collision is handled in updateProjectiles via raycast checks against scene meshes
     }
 
-    private func checkProjectileCollision(projectilePosition: SIMD3<Float>) -> Bool {
-        for child in rootEntity.children {
-            guard child.name.hasPrefix("SceneMesh_") else { continue }
-
-            if child.components[CollisionComponent.self] != nil {
-                let meshPosition = child.position(relativeTo: nil)
-                let distance = simd_distance(projectilePosition, meshPosition)
-                if distance < 0.5 {
-                    return true
+    /// Check collision using ray-triangle intersection against scene reconstruction meshes
+    /// This provides accurate collision with real-world surfaces detected by LiDAR
+    private func checkProjectileCollision(projectilePosition: SIMD3<Float>, direction: SIMD3<Float>, previousPosition: SIMD3<Float>) -> SIMD3<Float>? {
+        // Calculate ray from previous position to current position
+        let rayOrigin = previousPosition
+        let rayDirection = projectilePosition - previousPosition
+        let rayLength = simd_length(rayDirection)
+        
+        // Skip if no movement
+        guard rayLength > 0.001 else { return nil }
+        
+        let normalizedDirection = rayDirection / rayLength
+        var closestHit: SIMD3<Float>? = nil
+        var closestDistance: Float = rayLength
+        
+        // Check against all scene mesh anchors
+        for (_, meshAnchor) in sceneMeshAnchors {
+            if let hitPoint = raycastAgainstMesh(
+                rayOrigin: rayOrigin,
+                rayDirection: normalizedDirection,
+                maxDistance: rayLength,
+                meshAnchor: meshAnchor
+            ) {
+                let hitDistance = simd_distance(rayOrigin, hitPoint)
+                if hitDistance < closestDistance {
+                    closestDistance = hitDistance
+                    closestHit = hitPoint
                 }
             }
         }
-        return false
+        
+        return closestHit
+    }
+    
+    /// Perform raycast against a mesh anchor's geometry
+    private func raycastAgainstMesh(
+        rayOrigin: SIMD3<Float>,
+        rayDirection: SIMD3<Float>,
+        maxDistance: Float,
+        meshAnchor: MeshAnchor
+    ) -> SIMD3<Float>? {
+        let geometry = meshAnchor.geometry
+        let transform = meshAnchor.originFromAnchorTransform
+        
+        // Get vertices from mesh
+        let vertexBuffer = geometry.vertices
+        let vertexCount = vertexBuffer.count
+        
+        // Get indices/faces
+        let faceBuffer = geometry.faces
+        let faceCount = faceBuffer.count
+        let indicesPerFace = faceBuffer.primitive.indexCount
+        
+        // Only support triangles (3 vertices per face)
+        guard indicesPerFace == 3 else { return nil }
+        
+        var closestHit: SIMD3<Float>? = nil
+        var closestT: Float = maxDistance
+        
+        // Access vertex data
+        let vertexPointer = vertexBuffer.buffer.contents()
+        let vertexStride = vertexBuffer.stride
+        
+        // Access index data
+        let indexPointer = faceBuffer.buffer.contents()
+        let bytesPerIndex = faceBuffer.bytesPerIndex
+        
+        // Iterate through all triangles
+        for faceIndex in 0..<faceCount {
+            // Get triangle indices
+            let i0: UInt32
+            let i1: UInt32
+            let i2: UInt32
+            
+            if bytesPerIndex == 2 {
+                // UInt16 indices
+                let indexPtr = indexPointer.advanced(by: faceIndex * 3 * bytesPerIndex)
+                    .bindMemory(to: UInt16.self, capacity: 3)
+                i0 = UInt32(indexPtr[0])
+                i1 = UInt32(indexPtr[1])
+                i2 = UInt32(indexPtr[2])
+            } else {
+                // UInt32 indices
+                let indexPtr = indexPointer.advanced(by: faceIndex * 3 * bytesPerIndex)
+                    .bindMemory(to: UInt32.self, capacity: 3)
+                i0 = indexPtr[0]
+                i1 = indexPtr[1]
+                i2 = indexPtr[2]
+            }
+            
+            // Get vertex positions (in local space)
+            let v0Local = getVertex(at: Int(i0), pointer: vertexPointer, stride: vertexStride)
+            let v1Local = getVertex(at: Int(i1), pointer: vertexPointer, stride: vertexStride)
+            let v2Local = getVertex(at: Int(i2), pointer: vertexPointer, stride: vertexStride)
+            
+            // Transform to world space
+            let v0 = transformPoint(v0Local, by: transform)
+            let v1 = transformPoint(v1Local, by: transform)
+            let v2 = transformPoint(v2Local, by: transform)
+            
+            // Ray-triangle intersection (Möller–Trumbore algorithm)
+            if let t = rayTriangleIntersection(
+                rayOrigin: rayOrigin,
+                rayDirection: rayDirection,
+                v0: v0, v1: v1, v2: v2
+            ) {
+                if t > 0.001 && t < closestT {
+                    closestT = t
+                    closestHit = rayOrigin + rayDirection * t
+                }
+            }
+        }
+        
+        return closestHit
+    }
+    
+    /// Extract vertex position from buffer
+    private func getVertex(at index: Int, pointer: UnsafeMutableRawPointer, stride: Int) -> SIMD3<Float> {
+        let vertexPtr = pointer.advanced(by: index * stride)
+            .bindMemory(to: SIMD3<Float>.self, capacity: 1)
+        return vertexPtr.pointee
+    }
+    
+    /// Transform a point by a 4x4 matrix
+    private func transformPoint(_ point: SIMD3<Float>, by matrix: simd_float4x4) -> SIMD3<Float> {
+        let p4 = SIMD4<Float>(point.x, point.y, point.z, 1.0)
+        let transformed = matrix * p4
+        return SIMD3<Float>(transformed.x, transformed.y, transformed.z)
+    }
+    
+    /// Möller–Trumbore ray-triangle intersection algorithm
+    /// Returns the parametric t value if intersection occurs, nil otherwise
+    private func rayTriangleIntersection(
+        rayOrigin: SIMD3<Float>,
+        rayDirection: SIMD3<Float>,
+        v0: SIMD3<Float>,
+        v1: SIMD3<Float>,
+        v2: SIMD3<Float>
+    ) -> Float? {
+        let epsilon: Float = 0.0000001
+        
+        let edge1 = v1 - v0
+        let edge2 = v2 - v0
+        
+        let h = simd_cross(rayDirection, edge2)
+        let a = simd_dot(edge1, h)
+        
+        // Ray is parallel to triangle
+        if a > -epsilon && a < epsilon {
+            return nil
+        }
+        
+        let f = 1.0 / a
+        let s = rayOrigin - v0
+        let u = f * simd_dot(s, h)
+        
+        if u < 0.0 || u > 1.0 {
+            return nil
+        }
+        
+        let q = simd_cross(s, edge1)
+        let v = f * simd_dot(rayDirection, q)
+        
+        if v < 0.0 || u + v > 1.0 {
+            return nil
+        }
+        
+        // Compute t to find intersection point
+        let t = f * simd_dot(edge2, q)
+        
+        if t > epsilon {
+            return t
+        }
+        
+        return nil
     }
 
     // MARK: - Explosion System

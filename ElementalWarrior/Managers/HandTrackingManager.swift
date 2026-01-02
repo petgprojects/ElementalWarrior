@@ -9,6 +9,7 @@ import SwiftUI
 import RealityKit
 import ARKit
 import QuartzCore
+import UIKit
 
 // MARK: - Debug Hand State
 
@@ -109,6 +110,11 @@ final class HandTrackingManager {
     // Preloaded templates
     private var fireballTemplate: Entity?
     private var explosionTemplate: Entity?
+    
+    // Audio Resources
+    private var crackleSound: AudioFileResource?
+    private var wooshSound: AudioFileResource?
+    private var explosionSound: AudioFileResource?
 
     // Active projectiles in flight
     private var activeProjectiles: [UUID: ProjectileState] = [:]
@@ -156,6 +162,9 @@ final class HandTrackingManager {
         var isPendingDespawn: Bool = false
         var lastKnownPosition: SIMD3<Float>?
         var isTrackingLost: Bool = false  // Only true when ARKit tracking is actually lost
+        
+        // Audio controller for looping sounds
+        var crackleController: AudioPlaybackController?
     }
 
     private var leftHandState = HandState()
@@ -172,6 +181,7 @@ final class HandTrackingManager {
     func startHandTracking() async {
         await loadFireballTemplate()
         await loadExplosionTemplate()
+        await loadAudioResources()
 
         do {
             var providers: [any DataProvider] = []
@@ -224,6 +234,47 @@ final class HandTrackingManager {
             createExplosionEffect()
         }
         print("Explosion template created programmatically")
+    }
+
+    private func loadAudioResources() async {
+        // Load audio resources
+        // We try to load from bundle first, then fallback to data assets
+        
+        // Crackle - loops
+        crackleSound = await loadAudio(named: "fire_crackle", ext: "wav", shouldLoop: true)
+        
+        // Woosh - one shot
+        wooshSound = await loadAudio(named: "fire_woosh_clipped", ext: "wav", shouldLoop: false)
+        
+        // Explosion - one shot
+        explosionSound = await loadAudio(named: "explosion_clipped", ext: "wav", shouldLoop: false)
+    }
+    
+    private func loadAudio(named name: String, ext: String, shouldLoop: Bool) async -> AudioFileResource? {
+        do {
+            // 1. Try loading directly from bundle (if file exists)
+            let config = AudioFileResource.Configuration(shouldLoop: shouldLoop)
+            if let resource = try? await AudioFileResource.load(named: "\(name).\(ext)", configuration: config) {
+                return resource
+            }
+            
+            // 2. Fallback: Try loading from Asset Catalog (NSDataAsset)
+            if let asset = NSDataAsset(name: name) {
+                let tempDir = FileManager.default.temporaryDirectory
+                let tempURL = tempDir.appendingPathComponent("\(name).\(ext)")
+                
+                try asset.data.write(to: tempURL)
+                
+                let resource = try await AudioFileResource.load(contentsOf: tempURL, configuration: config)
+                return resource
+            }
+            
+            print("Audio file '\(name)' not found in bundle or assets")
+            return nil
+        } catch {
+            print("Failed to load audio '\(name)': \(error)")
+            return nil
+        }
     }
 
     // MARK: - Hand Update Loop
@@ -372,6 +423,15 @@ final class HandTrackingManager {
             let fireball = await createHandFireball()
             fireball.position = position
             fireball.scale = [0.01, 0.01, 0.01]
+            
+            // Play crackle sound
+            if let crackle = crackleSound {
+                let controller = fireball.playAudio(crackle)
+                controller.gain = -80
+                controller.fade(to: 0, duration: 0.5)
+                leftHandState.crackleController = controller
+            }
+            
             rootEntity.addChild(fireball)
             leftHandState.fireball = fireball
 
@@ -457,6 +517,15 @@ final class HandTrackingManager {
             let fireball = await createHandFireball()
             fireball.position = position
             fireball.scale = [0.01, 0.01, 0.01]
+            
+            // Play crackle sound
+            if let crackle = crackleSound {
+                let controller = fireball.playAudio(crackle)
+                controller.gain = -80
+                controller.fade(to: 0, duration: 0.5)
+                rightHandState.crackleController = controller
+            }
+            
             rootEntity.addChild(fireball)
             rightHandState.fireball = fireball
 
@@ -511,6 +580,9 @@ final class HandTrackingManager {
 
     private func extinguishLeft() async {
         guard let fireball = leftHandState.fireball else { return }
+        
+        // Fade out crackle
+        leftHandState.crackleController?.fade(to: -80, duration: 0.25)
 
         leftHandState.isAnimating = true
         let position = fireball.position
@@ -539,6 +611,10 @@ final class HandTrackingManager {
         leftHandState.isShowingFireball = false
         leftHandState.isPendingDespawn = false
         leftHandState.isAnimating = false
+        
+        // Ensure audio is stopped
+        leftHandState.crackleController?.stop()
+        leftHandState.crackleController = nil
 
         // Stop emitter after short burst, let particles fade naturally
         Task {
@@ -554,6 +630,9 @@ final class HandTrackingManager {
 
     private func extinguishRight() async {
         guard let fireball = rightHandState.fireball else { return }
+        
+        // Fade out crackle
+        rightHandState.crackleController?.fade(to: -80, duration: 0.25)
 
         rightHandState.isAnimating = true
         let position = fireball.position
@@ -580,6 +659,10 @@ final class HandTrackingManager {
         rightHandState.isShowingFireball = false
         rightHandState.isPendingDespawn = false
         rightHandState.isAnimating = false
+        
+        // Ensure audio is stopped
+        rightHandState.crackleController?.stop()
+        rightHandState.crackleController = nil
 
         Task {
             try? await Task.sleep(for: .milliseconds(100))
@@ -594,6 +677,7 @@ final class HandTrackingManager {
 
     private func forceExtinguishLeft() async {
         if let fireball = leftHandState.fireball {
+            leftHandState.crackleController?.stop()
             let smokePuff = createSmokePuff()
             smokePuff.position = fireball.position
             rootEntity.addChild(smokePuff)
@@ -614,6 +698,7 @@ final class HandTrackingManager {
 
     private func forceExtinguishRight() async {
         if let fireball = rightHandState.fireball {
+            rightHandState.crackleController?.stop()
             let smokePuff = createSmokePuff()
             smokePuff.position = fireball.position
             rootEntity.addChild(smokePuff)
@@ -994,6 +1079,10 @@ final class HandTrackingManager {
 
     private func launchWithDirection(fireball: Entity, direction: SIMD3<Float>, hand: HandAnchor.Chirality) async {
         if hand == .left {
+            // Fade out crackle quickly
+            leftHandState.crackleController?.fade(to: -80, duration: 0.1)
+            leftHandState.crackleController = nil
+            
             leftHandState.fireball = nil
             leftHandState.isShowingFireball = false
             leftHandState.despawnTask?.cancel()
@@ -1001,12 +1090,21 @@ final class HandTrackingManager {
             leftHandState.isPendingDespawn = false
             leftHandState.lastPositions = []
         } else {
+            // Fade out crackle quickly
+            rightHandState.crackleController?.fade(to: -80, duration: 0.1)
+            rightHandState.crackleController = nil
+            
             rightHandState.fireball = nil
             rightHandState.isShowingFireball = false
             rightHandState.despawnTask?.cancel()
             rightHandState.despawnTask = nil
             rightHandState.isPendingDespawn = false
             rightHandState.lastPositions = []
+        }
+        
+        // Play woosh sound
+        if let woosh = wooshSound {
+            fireball.playAudio(woosh)
         }
 
         let projectileID = UUID()
@@ -1570,6 +1668,13 @@ final class HandTrackingManager {
         }
 
         explosion.position = position
+        
+        // Play explosion sound
+        var audioController: AudioPlaybackController?
+        if let explosionSound = explosionSound {
+            audioController = explosion.playAudio(explosionSound)
+        }
+        
         rootEntity.addChild(explosion)
 
         print("Explosion at \(position)")
@@ -1589,7 +1694,12 @@ final class HandTrackingManager {
         }
 
         Task {
-            try? await Task.sleep(for: .milliseconds(1700))
+            try? await Task.sleep(for: .milliseconds(1500))
+            
+            // Fade out audio
+            audioController?.fade(to: -80, duration: 0.2)
+            
+            try? await Task.sleep(for: .milliseconds(200))
             explosion.removeFromParent()
         }
     }

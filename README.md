@@ -21,18 +21,28 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **Home Interface**: A welcoming window with an animated fireball and quick access to the arena
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
+- **World Tracking**: Device pose tracking for gaze-based aiming
+- **Scene Reconstruction**: Real-world surface detection for fireball collisions
 - **Gesture Recognition**:
   - Open palm facing up gesture detection to spawn fireballs
+  - Fist detection for punch-to-throw gesture
+  - Velocity tracking for punch detection
   - Both hands work independently and simultaneously
-  - Accurate palm orientation detection (fixed for left/right hand symmetry)
+  - Intent-based gesture system with delayed despawn (1.5s grace period)
 - **Fire Bending**:
   - Realistic multi-layered fireball particle effects
   - Fireballs appear in open palms and track hand position
+  - **Punch-to-throw**: Close fist and punch to launch fireballs toward your gaze direction
+  - Projectiles fly at 12 m/s with fire trail effects
+  - Fireballs explode on impact with walls/surfaces or after 20m max range
   - Smooth spawn/extinguish animations with smoke puffs
   - Dynamic point lighting from fireballs
 - **Visual Effects**:
   - Four-layer particle system for realistic fire (hot core, inner flame, spikes, outer flame)
+  - Fire trail effect on flying projectiles
+  - Five-layer explosion effect (white flash, yellow core, orange flame, red outer, smoke)
   - Smoke puff effects when fireballs extinguish
+  - Dynamic explosion lighting with fade animation
   - Programmatically generated particle emitters for optimal performance
 
 ### Planned Features
@@ -129,8 +139,12 @@ ElementalWarrior/
 │   ├── ElementalWarriorApp.swift      # Main app entry point
 │   ├── AppModel.swift                 # App-wide state management
 │   ├── HomeView.swift                 # Main menu interface
-│   ├── ArenaImmersiveView.swift       # Hand tracking & immersive environment
-│   └── FireballEntity.swift           # Particle effect factory functions
+│   ├── ArenaImmersiveView.swift       # Immersive view setup
+│   ├── Info.plist                     # App permissions (hand/world sensing)
+│   ├── Managers/
+│   │   └── HandTrackingManager.swift  # Hand tracking, gestures, projectiles, collisions
+│   └── Effects/
+│       └── FireEffects.swift          # Fireball, trail, and explosion particle effects
 ├── RealityAssetStuff/                 # Reality Composer Pro project (experimental)
 ├── CLAUDE.md                          # Developer guidance for AI assistants
 └── ElementalWarrior.xcodeproj/        # Xcode project
@@ -157,8 +171,10 @@ ElementalWarrior/
 1. The app opens with the Home window showing an animated fireball
 2. Click "Start" to enter the immersive arena
 3. Open your palms facing upward to spawn fireballs (works for both hands)
-4. Flip your palms down to extinguish the fireballs
-5. Click "Quit Immersion" to return to the home view
+4. **To throw**: Look at your target, then make a fist and punch the fireball
+5. Fireballs fly toward where you're looking and explode on impact
+6. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
+7. Click "Quit Immersion" to return to the home view
 
 ## Development Roadmap
 
@@ -169,13 +185,16 @@ ElementalWarrior/
 - [x] Hand tracking integration (ARKit)
 - [x] Palm-up gesture recognition (both hands)
 - [x] Fireball spawn/extinguish system
-- [ ] Fireball projectile launching
-- [ ] Projectile physics and trajectories
+- [x] Fireball projectile launching (punch-to-throw)
+- [x] Projectile physics and trajectories
+- [x] Gaze-based aiming (head direction targeting)
+- [x] Scene reconstruction for surface collision
+- [x] Explosion effects on impact
 
 ### Phase 2: Combat System
 - [ ] AI enemy entities
 - [ ] Health and damage system
-- [ ] Collision detection
+- [x] Collision detection (real-world surfaces)
 - [ ] Basic combat loop
 - [ ] Enemy AI behaviors
 
@@ -195,18 +214,24 @@ ElementalWarrior/
 ## Implementation Notes
 
 ### Hand Tracking Implementation
-VisionOS provides `ARKitSession` and `HandTrackingProvider` for accessing hand skeleton data. Current implementation:
-- Tracks hand joint positions in 3D space (wrist, knuckles, fingertips)
+VisionOS provides `ARKitSession` with multiple providers for comprehensive tracking. Current implementation:
+- **HandTrackingProvider**: Tracks hand joint positions in 3D space (wrist, knuckles, fingertips)
+- **WorldTrackingProvider**: Tracks device pose for gaze direction (head-based aiming)
+- **SceneReconstructionProvider**: Detects real-world surfaces for projectile collisions
 - Detects open palm gesture by measuring finger extension (>5cm tip-to-knuckle)
+- Detects fist gesture by checking finger extension (<3.5cm threshold)
+- Calculates hand velocity from 100ms position history for punch detection
 - Detects palm orientation by checking wrist transform Y-axis alignment with world up
 - Handles left/right hand coordinate system mirroring correctly
-- Future: Calculate hand velocity for gesture power and dynamic gestures
+- Intent-based delayed despawn system (1.5s grace period) for smoother gesture flow
 
 ### Physics and Collision
-RealityKit's physics system will handle:
-- Projectile trajectories
-- Collision detection between elements and entities
-- Environmental interactions
+Current projectile system implementation:
+- Manual projectile movement at 60fps update rate (12 m/s flight speed)
+- Scene reconstruction meshes for real-world surface collision detection
+- Distance-based collision checking with 0.5m proximity threshold
+- Maximum projectile range: 20 meters before auto-explosion
+- Future: RealityKit physics for enemy entity collisions
 
 ### Performance Considerations
 - Use entity pooling for frequently spawned projectiles

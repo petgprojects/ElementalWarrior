@@ -4,6 +4,8 @@
 <dict>
 	<key>NSHandsTrackingUsageDescription</key>
 	<string>ElementalWarrior uses hand tracking to detect gestures for casting elemental spells.</string>
+	<key>NSWorldSensingUsageDescription</key>
+	<string>ElementalWarrior needs world sensing to detect surfaces for fireball collisions and target enemies.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationPreferredDefaultSceneSessionRole</key>

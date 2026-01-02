@@ -49,8 +49,16 @@ The app uses a dual-space architecture:
 - Cross-hand punch support (punch with opposite hand)
 - Gaze-based targeting using device head direction
 - Projectile flight at 12 m/s with 20m max range
-- Distance-based collision with scene reconstruction meshes
+- **Persistent mesh collision system** - scanned geometry stays in memory even when out of LiDAR range
+- Ray-triangle intersection (Möller–Trumbore algorithm) against cached mesh geometry
 - Transform pipeline: Joint space → Anchor space → World space
+
+**Persistent Room Scanning**
+- `CachedMeshGeometry` struct extracts and stores vertices + triangle indices from MeshAnchors
+- `persistentMeshCache: [UUID: CachedMeshGeometry]` - Geometry survives ARKit anchor removal
+- Users can scan entire room by walking around, then hit walls from anywhere
+- Visual scan overlay (semi-transparent cyan) shows scanned surfaces
+- UI controls: toggle visualization, clear scan data, view scan statistics
 
 **Fire Effects** (Effects/FireEffects.swift)
 - `createRealisticFireball()` - Multi-layered particle effect (4 layers)

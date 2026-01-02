@@ -53,8 +53,8 @@ final class HandTrackingManager {
     // MARK: - Timing Constants
 
     private let despawnDelayDuration: TimeInterval = 1.5       // Time before despawn after gesture ends
-    private let punchVelocityThreshold: Float = 0.5            // m/s minimum for punch detection (lowered for easier triggering)
-    private let punchProximityThreshold: Float = 0.50          // meters - max distance from fireball center (50cm for reliable detection)
+    private let punchVelocityThreshold: Float = 0.3            // m/s minimum for punch detection (lowered for easier triggering)
+    private let punchProximityThreshold: Float = 0.20          // meters - max distance from fireball center (20cm for balanced hit detection)
     private let fistExtensionThreshold: Float = 0.045          // meters - finger extension for closed fist (relaxed)
     private let velocityHistoryDuration: TimeInterval = 0.15   // seconds of position history to keep
     private let projectileSpeed: Float = 12.0                  // m/s flight speed
@@ -165,24 +165,53 @@ final class HandTrackingManager {
             let shouldShowFireball = checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
 
             // Check if hand is a fist (for punch detection)
-            let (isFist, debugInfo) = checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
+            let (isFist, _) = checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
+            
+            // Get fist position early for collision checking
+            let earlyFistPosition = getFistPosition(anchor: anchor, skeleton: skeleton)
+            
+            // Calculate distances to fireballs for collision state detection
+            let distToLeftFireball: Float? = leftHandState.fireball.map { simd_distance(earlyFistPosition, $0.position) }
+            let distToRightFireball: Float? = rightHandState.fireball.map { simd_distance(earlyFistPosition, $0.position) }
+            
+            // Check if this hand's fist is colliding with any fireball
+            let isCollidingWithFireball = isFist && (
+                (distToLeftFireball != nil && distToLeftFireball! < punchProximityThreshold) ||
+                (distToRightFireball != nil && distToRightFireball! < punchProximityThreshold)
+            )
             
             // Update debug gesture state for UI
             if isLeft {
-                if isFist {
+                if isCollidingWithFireball {
+                    leftHandGestureState = .collision
+                } else if isFist {
                     leftHandGestureState = .fist
                 } else if shouldShowFireball {
                     leftHandGestureState = leftHandState.isShowingFireball ? .holdingFireball : .summon
                 } else {
                     leftHandGestureState = .none
                 }
+                // Add distance info to debug
+                let distInfo = distToLeftFireball.map { "L:\(String(format: "%.2f", $0))m" } ?? ""
+                let distInfo2 = distToRightFireball.map { "R:\(String(format: "%.2f", $0))m" } ?? ""
+                if !distInfo.isEmpty || !distInfo2.isEmpty {
+                    leftDebugInfo = "dist: \(distInfo) \(distInfo2) (thresh: \(String(format: "%.2f", punchProximityThreshold))m)"
+                }
             } else {
-                if isFist {
+                if isCollidingWithFireball {
+                    rightHandGestureState = .collision
+                } else if isFist {
                     rightHandGestureState = .fist
                 } else if shouldShowFireball {
                     rightHandGestureState = rightHandState.isShowingFireball ? .holdingFireball : .summon
                 } else {
                     rightHandGestureState = .none
+                }
+                // Add distance info to debug
+                let distInfo = distToLeftFireball.map { "L:\(String(format: "%.2f", $0))m" } ?? ""
+                let distInfo2 = distToRightFireball.map { "R:\(String(format: "%.2f", $0))m" } ?? ""
+                if !distInfo.isEmpty || !distInfo2.isEmpty {
+                    rightDebugInfo = "dist: \(distInfo) \(distInfo2) (thresh: \(String(format: "%.2f", punchProximityThreshold))m)"
                 }
             }
             

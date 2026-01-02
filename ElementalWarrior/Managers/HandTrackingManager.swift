@@ -32,6 +32,68 @@ struct ProjectileState {
     var previousPosition: SIMD3<Float>  // Track previous position for raycast collision
 }
 
+// MARK: - Cached Mesh Geometry
+
+/// Stores extracted mesh geometry that persists even when ARKit removes the anchor
+struct CachedMeshGeometry {
+    let id: UUID
+    let transform: simd_float4x4
+    let vertices: [SIMD3<Float>]
+    let triangleIndices: [(UInt32, UInt32, UInt32)]  // Pre-extracted triangle indices
+    var lastUpdated: Date
+    
+    /// Create cached geometry from a MeshAnchor
+    init(from anchor: MeshAnchor) {
+        self.id = anchor.id
+        self.transform = anchor.originFromAnchorTransform
+        self.lastUpdated = Date()
+        
+        let geometry = anchor.geometry
+        let vertexBuffer = geometry.vertices
+        let faceBuffer = geometry.faces
+        
+        // Extract vertices
+        var extractedVertices: [SIMD3<Float>] = []
+        let vertexPointer = vertexBuffer.buffer.contents()
+        let vertexStride = vertexBuffer.stride
+        
+        for i in 0..<vertexBuffer.count {
+            let vertexPtr = vertexPointer.advanced(by: i * vertexStride)
+                .bindMemory(to: SIMD3<Float>.self, capacity: 1)
+            extractedVertices.append(vertexPtr.pointee)
+        }
+        self.vertices = extractedVertices
+        
+        // Extract triangle indices
+        var extractedTriangles: [(UInt32, UInt32, UInt32)] = []
+        let indexPointer = faceBuffer.buffer.contents()
+        let bytesPerIndex = faceBuffer.bytesPerIndex
+        let faceCount = faceBuffer.count
+        
+        for faceIndex in 0..<faceCount {
+            let i0: UInt32
+            let i1: UInt32
+            let i2: UInt32
+            
+            if bytesPerIndex == 2 {
+                let indexPtr = indexPointer.advanced(by: faceIndex * 3 * bytesPerIndex)
+                    .bindMemory(to: UInt16.self, capacity: 3)
+                i0 = UInt32(indexPtr[0])
+                i1 = UInt32(indexPtr[1])
+                i2 = UInt32(indexPtr[2])
+            } else {
+                let indexPtr = indexPointer.advanced(by: faceIndex * 3 * bytesPerIndex)
+                    .bindMemory(to: UInt32.self, capacity: 3)
+                i0 = indexPtr[0]
+                i1 = indexPtr[1]
+                i2 = indexPtr[2]
+            }
+            extractedTriangles.append((i0, i1, i2))
+        }
+        self.triangleIndices = extractedTriangles
+    }
+}
+
 // MARK: - Hand Tracking Manager
 
 @MainActor
@@ -51,8 +113,26 @@ final class HandTrackingManager {
     // Active projectiles in flight
     private var activeProjectiles: [UUID: ProjectileState] = [:]
     
-    // Scene mesh anchors for collision detection
+    // Scene mesh anchors for collision detection (live from ARKit)
     private var sceneMeshAnchors: [UUID: MeshAnchor] = [:]
+    
+    // PERSISTENT mesh cache - keeps geometry even when ARKit removes anchors
+    private var persistentMeshCache: [UUID: CachedMeshGeometry] = [:]
+    
+    // Visual mesh entities for showing scanned areas
+    private var scanVisualizationEntities: [UUID: Entity] = [:]
+    
+    // Scanning visualization state - observable for UI
+    var isScanVisualizationEnabled: Bool = false {
+        didSet {
+            Task { @MainActor in
+                await updateScanVisualization()
+            }
+        }
+    }
+    var scannedMeshCount: Int = 0
+    var scannedTriangleCount: Int = 0
+    var scannedAreaDescription: String = "No areas scanned"
 
     // MARK: - Timing Constants
 
@@ -1012,26 +1092,219 @@ final class HandTrackingManager {
 
             switch update.event {
             case .added, .updated:
-                // Store the mesh anchor for collision detection
+                // Store the mesh anchor for collision detection (live)
                 sceneMeshAnchors[anchor.id] = anchor
                 
+                // IMPORTANT: Cache the geometry PERSISTENTLY
+                // This data survives even when ARKit removes the anchor
+                let cachedGeometry = CachedMeshGeometry(from: anchor)
+                persistentMeshCache[anchor.id] = cachedGeometry
+                
+                // Update scan statistics
+                updateScanStatistics()
+                
+                // Create collision entity for RealityKit (optional, we use our own raycast)
                 let collisionEntity = await createCollisionMesh(from: anchor)
                 if let existing = rootEntity.findEntity(named: "SceneMesh_\(anchor.id)") {
                     existing.removeFromParent()
                 }
                 collisionEntity.name = "SceneMesh_\(anchor.id)"
                 rootEntity.addChild(collisionEntity)
+                
+                // Update visualization if enabled
+                if isScanVisualizationEnabled {
+                    await createOrUpdateVisualization(for: anchor)
+                }
 
             case .removed:
+                // Remove from live anchors, but KEEP in persistent cache!
                 sceneMeshAnchors.removeValue(forKey: anchor.id)
+                
+                // Remove RealityKit collision entity
                 if let existing = rootEntity.findEntity(named: "SceneMesh_\(anchor.id)") {
                     existing.removeFromParent()
                 }
+                
+                // Note: We intentionally do NOT remove from persistentMeshCache
+                // This allows collision detection with surfaces that are no longer in LiDAR range
+                print("Mesh \\(anchor.id) removed from ARKit but kept in persistent cache")
 
             @unknown default:
                 break
             }
         }
+    }
+    
+    // MARK: - Scan Statistics
+    
+    private func updateScanStatistics() {
+        scannedMeshCount = persistentMeshCache.count
+        scannedTriangleCount = persistentMeshCache.values.reduce(0) { $0 + $1.triangleIndices.count }
+        
+        // Estimate scanned area (rough approximation based on triangle count)
+        // Average triangle might be ~0.01 sq meters
+        let estimatedArea = Float(scannedTriangleCount) * 0.01
+        if estimatedArea < 1 {
+            scannedAreaDescription = String(format: "%.0f triangles scanned", Float(scannedTriangleCount))
+        } else {
+            scannedAreaDescription = String(format: "~%.1f m² scanned (%d meshes)", estimatedArea, scannedMeshCount)
+        }
+    }
+    
+    // MARK: - Scan Visualization
+    
+    /// Toggle scan visualization on/off
+    func toggleScanVisualization() {
+        isScanVisualizationEnabled.toggle()
+    }
+    
+    /// Clear all persistent mesh data (useful for rescanning)
+    func clearScannedData() {
+        persistentMeshCache.removeAll()
+        
+        // Remove all visualization entities
+        for (_, entity) in scanVisualizationEntities {
+            entity.removeFromParent()
+        }
+        scanVisualizationEntities.removeAll()
+        
+        updateScanStatistics()
+        print("Cleared all persistent mesh data")
+    }
+    
+    private func updateScanVisualization() async {
+        if isScanVisualizationEnabled {
+            // Create visualizations for all cached meshes
+            for (id, cached) in persistentMeshCache {
+                await createVisualizationFromCache(id: id, cached: cached)
+            }
+        } else {
+            // Remove all visualization entities
+            for (_, entity) in scanVisualizationEntities {
+                entity.removeFromParent()
+            }
+            scanVisualizationEntities.removeAll()
+        }
+    }
+    
+    private func createOrUpdateVisualization(for anchor: MeshAnchor) async {
+        guard isScanVisualizationEnabled else { return }
+        
+        // Remove existing visualization for this anchor
+        if let existing = scanVisualizationEntities[anchor.id] {
+            existing.removeFromParent()
+        }
+        
+        // Create wireframe mesh visualization
+        let vizEntity = await createWireframeMesh(from: anchor)
+        vizEntity.name = "ScanViz_\\(anchor.id)"
+        rootEntity.addChild(vizEntity)
+        scanVisualizationEntities[anchor.id] = vizEntity
+    }
+    
+    private func createVisualizationFromCache(id: UUID, cached: CachedMeshGeometry) async {
+        // Remove existing visualization
+        if let existing = scanVisualizationEntities[id] {
+            existing.removeFromParent()
+        }
+        
+        // Create visualization entity from cached data
+        let vizEntity = Entity()
+        vizEntity.transform = Transform(matrix: cached.transform)
+        vizEntity.name = "ScanViz_\\(id)"
+        
+        // Create a simple point cloud or wireframe representation
+        // Using a grid material for the mesh
+        do {
+            var descr = MeshDescriptor(name: "cachedMesh")
+            descr.positions = MeshBuffer(cached.vertices)
+            
+            // Create triangle indices
+            var indices: [UInt32] = []
+            for tri in cached.triangleIndices {
+                indices.append(tri.0)
+                indices.append(tri.1)
+                indices.append(tri.2)
+            }
+            descr.primitives = .triangles(indices)
+            
+            let mesh = try MeshResource.generate(from: [descr])
+            
+            // Semi-transparent cyan material for scanned areas
+            var material = UnlitMaterial()
+            material.color = .init(tint: .init(red: 0, green: 0.8, blue: 1, alpha: 0.15))
+            material.blending = .transparent(opacity: .init(floatLiteral: 0.15))
+            
+            let modelComponent = ModelComponent(mesh: mesh, materials: [material])
+            vizEntity.components.set(modelComponent)
+        } catch {
+            print("Failed to create visualization mesh: \\(error)")
+        }
+        
+        rootEntity.addChild(vizEntity)
+        scanVisualizationEntities[id] = vizEntity
+    }
+    
+    private func createWireframeMesh(from anchor: MeshAnchor) async -> Entity {
+        let entity = Entity()
+        entity.transform = Transform(matrix: anchor.originFromAnchorTransform)
+        
+        do {
+            let geometry = anchor.geometry
+            
+            // Extract vertices
+            var vertices: [SIMD3<Float>] = []
+            let vertexBuffer = geometry.vertices
+            let vertexPointer = vertexBuffer.buffer.contents()
+            let vertexStride = vertexBuffer.stride
+            
+            for i in 0..<vertexBuffer.count {
+                let vertexPtr = vertexPointer.advanced(by: i * vertexStride)
+                    .bindMemory(to: SIMD3<Float>.self, capacity: 1)
+                vertices.append(vertexPtr.pointee)
+            }
+            
+            // Extract indices
+            let faceBuffer = geometry.faces
+            let indexPointer = faceBuffer.buffer.contents()
+            let bytesPerIndex = faceBuffer.bytesPerIndex
+            var indices: [UInt32] = []
+            
+            for faceIndex in 0..<faceBuffer.count {
+                if bytesPerIndex == 2 {
+                    let indexPtr = indexPointer.advanced(by: faceIndex * 3 * bytesPerIndex)
+                        .bindMemory(to: UInt16.self, capacity: 3)
+                    indices.append(UInt32(indexPtr[0]))
+                    indices.append(UInt32(indexPtr[1]))
+                    indices.append(UInt32(indexPtr[2]))
+                } else {
+                    let indexPtr = indexPointer.advanced(by: faceIndex * 3 * bytesPerIndex)
+                        .bindMemory(to: UInt32.self, capacity: 3)
+                    indices.append(indexPtr[0])
+                    indices.append(indexPtr[1])
+                    indices.append(indexPtr[2])
+                }
+            }
+            
+            // Create mesh
+            var descr = MeshDescriptor(name: "scanMesh")
+            descr.positions = MeshBuffer(vertices)
+            descr.primitives = .triangles(indices)
+            
+            let mesh = try MeshResource.generate(from: [descr])
+            
+            // Semi-transparent cyan material
+            var material = UnlitMaterial()
+            material.color = .init(tint: .init(red: 0, green: 0.8, blue: 1, alpha: 0.15))
+            material.blending = .transparent(opacity: .init(floatLiteral: 0.15))
+            
+            let modelComponent = ModelComponent(mesh: mesh, materials: [material])
+            entity.components.set(modelComponent)
+        } catch {
+            print("Failed to create wireframe mesh: \\(error)")
+        }
+        
+        return entity
     }
 
     private func createCollisionMesh(from anchor: MeshAnchor) async -> Entity {
@@ -1056,11 +1329,11 @@ final class HandTrackingManager {
     // MARK: - Collision Handling
 
     private func setupCollisionHandling() async {
-        // Collision is handled in updateProjectiles via raycast checks against scene meshes
+        // Collision is handled in updateProjectiles via raycast checks against persistent mesh cache
     }
 
-    /// Check collision using ray-triangle intersection against scene reconstruction meshes
-    /// This provides accurate collision with real-world surfaces detected by LiDAR
+    /// Check collision using ray-triangle intersection against PERSISTENT mesh cache
+    /// This allows collision with surfaces even when they're no longer in LiDAR range
     private func checkProjectileCollision(projectilePosition: SIMD3<Float>, direction: SIMD3<Float>, previousPosition: SIMD3<Float>) -> SIMD3<Float>? {
         // Calculate ray from previous position to current position
         let rayOrigin = previousPosition
@@ -1074,13 +1347,14 @@ final class HandTrackingManager {
         var closestHit: SIMD3<Float>? = nil
         var closestDistance: Float = rayLength
         
-        // Check against all scene mesh anchors
-        for (_, meshAnchor) in sceneMeshAnchors {
-            if let hitPoint = raycastAgainstMesh(
+        // Check against PERSISTENT mesh cache (not just live anchors)
+        // This allows collision with walls that were scanned earlier but are now out of range
+        for (_, cachedMesh) in persistentMeshCache {
+            if let hitPoint = raycastAgainstCachedMesh(
                 rayOrigin: rayOrigin,
                 rayDirection: normalizedDirection,
-                maxDistance: rayLength,
-                meshAnchor: meshAnchor
+                maxDistance: closestDistance,
+                cached: cachedMesh
             ) {
                 let hitDistance = simd_distance(rayOrigin, hitPoint)
                 if hitDistance < closestDistance {
@@ -1093,7 +1367,51 @@ final class HandTrackingManager {
         return closestHit
     }
     
-    /// Perform raycast against a mesh anchor's geometry
+    /// Perform raycast against cached mesh geometry (works even when ARKit anchor is gone)
+    private func raycastAgainstCachedMesh(
+        rayOrigin: SIMD3<Float>,
+        rayDirection: SIMD3<Float>,
+        maxDistance: Float,
+        cached: CachedMeshGeometry
+    ) -> SIMD3<Float>? {
+        let transform = cached.transform
+        
+        var closestHit: SIMD3<Float>? = nil
+        var closestT: Float = maxDistance
+        
+        // Iterate through all triangles in the cached mesh
+        for (i0, i1, i2) in cached.triangleIndices {
+            // Get vertex positions (in local space)
+            guard Int(i0) < cached.vertices.count,
+                  Int(i1) < cached.vertices.count,
+                  Int(i2) < cached.vertices.count else { continue }
+            
+            let v0Local = cached.vertices[Int(i0)]
+            let v1Local = cached.vertices[Int(i1)]
+            let v2Local = cached.vertices[Int(i2)]
+            
+            // Transform to world space
+            let v0 = transformPoint(v0Local, by: transform)
+            let v1 = transformPoint(v1Local, by: transform)
+            let v2 = transformPoint(v2Local, by: transform)
+            
+            // Ray-triangle intersection (Möller–Trumbore algorithm)
+            if let t = rayTriangleIntersection(
+                rayOrigin: rayOrigin,
+                rayDirection: rayDirection,
+                v0: v0, v1: v1, v2: v2
+            ) {
+                if t > 0.001 && t < closestT {
+                    closestT = t
+                    closestHit = rayOrigin + rayDirection * t
+                }
+            }
+        }
+        
+        return closestHit
+    }
+    
+    /// Perform raycast against a live mesh anchor's geometry (for reference, now using cached version primarily)
     private func raycastAgainstMesh(
         rayOrigin: SIMD3<Float>,
         rayDirection: SIMD3<Float>,

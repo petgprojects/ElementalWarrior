@@ -102,6 +102,58 @@ struct HomeView: View {
                     .background(.ultraThinMaterial)
                     .cornerRadius(8)
                 }
+                
+                // Room Scanning Panel
+                Divider()
+                    .padding(.vertical, 8)
+                
+                Text("Room Scanning")
+                    .font(.headline)
+                
+                VStack(spacing: 12) {
+                    // Scan status
+                    HStack {
+                        Image(systemName: "camera.metering.spot")
+                            .foregroundColor(.cyan)
+                        Text(appModel.handTrackingManager.scannedAreaDescription)
+                            .font(.system(size: 14, design: .monospaced))
+                    }
+                    .padding(.horizontal)
+                    
+                    Text("Walk around to scan your room. Fireballs will collide with all scanned surfaces!")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    
+                    HStack(spacing: 12) {
+                        // Toggle visualization
+                        Button {
+                            appModel.handTrackingManager.toggleScanVisualization()
+                        } label: {
+                            HStack {
+                                Image(systemName: appModel.handTrackingManager.isScanVisualizationEnabled ? "eye.fill" : "eye.slash")
+                                Text(appModel.handTrackingManager.isScanVisualizationEnabled ? "Hide Scan" : "Show Scan")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.cyan)
+                        
+                        // Clear scan data
+                        Button {
+                            appModel.handTrackingManager.clearScannedData()
+                        } label: {
+                            HStack {
+                                Image(systemName: "trash")
+                                Text("Clear")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                    }
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
+                .cornerRadius(8)
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(32)

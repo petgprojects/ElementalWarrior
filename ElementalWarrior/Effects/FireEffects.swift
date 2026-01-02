@@ -9,14 +9,20 @@
 
 import RealityKit
 import SwiftUI
+import CoreGraphics
 
 #if os(macOS)
     import AppKit
     typealias PlatformColor = NSColor
+    typealias PlatformImage = NSImage
 #else
     import UIKit
     typealias PlatformColor = UIColor
+    typealias PlatformImage = UIImage
 #endif
+
+// Cache for the procedural scorch texture
+private var cachedScorchTexture: TextureResource?
 
 // MARK: - Fireball Effect
 
@@ -184,8 +190,8 @@ func createExplosionEffect() -> Entity {
     let flash = createExplosionLayer(
         color: .white,
         birthRate: 2000,
-        size: 0.15,
-        speed: 0.8,
+        size: 0.075,
+        speed: 0.4,
         lifeSpan: 0.15,
         burstDuration: 0.05
     )
@@ -195,8 +201,8 @@ func createExplosionEffect() -> Entity {
     let core = createExplosionLayer(
         color: PlatformColor(red: 1.0, green: 0.8, blue: 0.2, alpha: 1.0),
         birthRate: 1500,
-        size: 0.2,
-        speed: 1.5,
+        size: 0.1,
+        speed: 0.75,
         lifeSpan: 0.4,
         burstDuration: 0.1
     )
@@ -206,8 +212,8 @@ func createExplosionEffect() -> Entity {
     let flame = createExplosionLayer(
         color: PlatformColor(red: 1.0, green: 0.4, blue: 0.0, alpha: 1.0),
         birthRate: 800,
-        size: 0.3,
-        speed: 2.5,
+        size: 0.15,
+        speed: 1.25,
         lifeSpan: 0.6,
         burstDuration: 0.15
     )
@@ -217,8 +223,8 @@ func createExplosionEffect() -> Entity {
     let outer = createExplosionLayer(
         color: PlatformColor(red: 0.9, green: 0.15, blue: 0.0, alpha: 1.0),
         birthRate: 400,
-        size: 0.4,
-        speed: 3.0,
+        size: 0.2,
+        speed: 1.5,
         lifeSpan: 0.8,
         burstDuration: 0.2
     )
@@ -232,8 +238,8 @@ func createExplosionEffect() -> Entity {
     let lightEntity = Entity()
     let pointLight = PointLightComponent(
         color: .orange,
-        intensity: 10000,
-        attenuationRadius: 8.0
+        intensity: 5000,
+        attenuationRadius: 4.0
     )
     lightEntity.components.set(pointLight)
     rootEntity.addChild(lightEntity)
@@ -290,18 +296,18 @@ private func createExplosionSmokeLayer() -> Entity {
     var emitter = ParticleEmitterComponent()
     emitter.timing = .once(warmUp: 0, emit: .init(duration: 0.3))
     emitter.emitterShape = .sphere
-    emitter.emitterShapeSize = [0.1, 0.1, 0.1]
+    emitter.emitterShapeSize = [0.05, 0.05, 0.05]
 
     emitter.mainEmitter.birthRate = 300
     emitter.mainEmitter.lifeSpan = 1.5
     emitter.mainEmitter.lifeSpanVariation = 0.5
 
-    emitter.speed = 1.0
-    emitter.speedVariation = 0.5
+    emitter.speed = 0.5
+    emitter.speedVariation = 0.25
     emitter.mainEmitter.acceleration = [0, 0.3, 0]
 
-    emitter.mainEmitter.size = 0.15
-    emitter.mainEmitter.sizeVariation = 0.05
+    emitter.mainEmitter.size = 0.075
+    emitter.mainEmitter.sizeVariation = 0.025
     emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 3.0
 
     emitter.mainEmitter.color = .evolving(
@@ -313,6 +319,172 @@ private func createExplosionSmokeLayer() -> Entity {
     emitter.mainEmitter.noiseStrength = 0.15
     emitter.mainEmitter.noiseAnimationSpeed = 0.8
 
+    entity.components.set(emitter)
+    return entity
+}
+
+// MARK: - Scorch Mark Effect
+
+@MainActor
+func createScorchMark() -> Entity {
+    let entity = Entity()
+    entity.name = "ScorchMark"
+    
+    // Ensure we have the texture
+    if cachedScorchTexture == nil {
+        cachedScorchTexture = generateProceduralScorchTexture()
+    }
+    
+    guard let texture = cachedScorchTexture else {
+        return entity
+    }
+    
+    // Use a single layer with PhysicallyBasedMaterial for better lighting integration
+    // and to avoid "white circle" artifacts from UnlitMaterial defaults.
+    let mesh = MeshResource.generatePlane(width: 0.5, depth: 0.5, cornerRadius: 0.25)
+    
+    var material = PhysicallyBasedMaterial()
+    // Force the base color to be black. The texture's alpha channel will control opacity.
+    // Using .black tint ensures that even if there are lighting artifacts, they stay dark (soot).
+    material.baseColor = .init(tint: .black, texture: .init(texture))
+    material.roughness = .init(floatLiteral: 1.0) // Soot is rough, not shiny
+    material.metallic = .init(floatLiteral: 0.0)
+    material.blending = .transparent(opacity: 1.0)
+    
+    let model = ModelEntity(mesh: mesh, materials: [material])
+    
+    // Random rotation for variety
+    let randomAngle = Float.random(in: 0...(2 * .pi))
+    model.orientation = simd_quatf(angle: randomAngle, axis: [0, 1, 0])
+    
+    entity.addChild(model)
+    
+    // 2. Lingering Smoke Effect
+    let smoke = createLingeringSmoke()
+    smoke.position = [0, 0.05, 0] 
+    smoke.orientation = simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
+    entity.addChild(smoke)
+    
+    return entity
+}
+
+private func generateProceduralScorchTexture() -> TextureResource? {
+    let width = 512
+    let height = 512
+    let bytesPerPixel = 4
+    let bytesPerRow = bytesPerPixel * width
+    let bitsPerComponent = 8
+    
+    var data = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+    
+    for y in 0..<height {
+        for x in 0..<width {
+            let offset = (y * width + x) * bytesPerPixel
+            
+            // Normalize coordinates -1 to 1
+            let nx = (Float(x) / Float(width)) * 2 - 1
+            let ny = (Float(y) / Float(height)) * 2 - 1
+            
+            // Distance from center
+            let dist = sqrt(nx*nx + ny*ny)
+            
+            // HARD CUTOFF: Force alpha to 0 near the edges to prevent mipmap bleeding
+            // This ensures the texture is strictly contained within the circle
+            if dist > 0.48 {
+                data[offset] = 0
+                data[offset + 1] = 0
+                data[offset + 2] = 0
+                data[offset + 3] = 0
+                continue
+            }
+            
+            // Base shape: Radial gradient
+            var alpha = max(0, 1.0 - dist)
+            
+            // Add noise to create holes and irregular edges
+            // Simple pseudo-random noise based on position
+            let noiseScale: Float = 10.0
+            let noise = sin(nx * noiseScale) * cos(ny * noiseScale) * 0.5 + 0.5
+            
+            // Erode edges and create holes
+            // If we are near the edge (dist > 0.5), noise has more effect
+            // If we are in center, it's more solid but still has some texture
+            let erosion = noise * (0.5 + dist)
+            
+            alpha = alpha - erosion * 0.5
+            
+            // Sharpen the transition to make it look like burnt flakes
+            alpha = smoothstep(edge0: 0.2, edge1: 0.4, x: alpha)
+            
+            // Randomize slightly per pixel for grain
+            let grain = Float.random(in: 0.8...1.0)
+            alpha *= grain
+            
+            let pixelAlpha = UInt8(max(0, min(255, alpha * 255)))
+            
+            // Black color, variable alpha
+            data[offset] = 0     // R
+            data[offset + 1] = 0 // G
+            data[offset + 2] = 0 // B
+            data[offset + 3] = pixelAlpha // A
+        }
+    }
+    
+    guard let provider = CGDataProvider(data: Data(data) as CFData),
+          let cgImage = CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: bitsPerComponent,
+            bitsPerPixel: bytesPerPixel * 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+          ) else {
+        return nil
+    }
+    
+    return try? TextureResource.generate(from: cgImage, options: .init(semantic: .color))
+}
+
+private func smoothstep(edge0: Float, edge1: Float, x: Float) -> Float {
+    let t = max(0, min(1, (x - edge0) / (edge1 - edge0)))
+    return t * t * (3 - 2 * t)
+}
+
+private func createLingeringSmoke() -> Entity {
+    let entity = Entity()
+    
+    var emitter = ParticleEmitterComponent()
+    // Emit for 2 seconds then stop
+    emitter.timing = .repeating(warmUp: 0, emit: .init(duration: 2.0))
+    
+    emitter.emitterShape = .plane
+    emitter.emitterShapeSize = [0.2, 0.2, 0.0]
+    
+    emitter.mainEmitter.birthRate = 15
+    emitter.mainEmitter.lifeSpan = 2.0
+    emitter.mainEmitter.lifeSpanVariation = 1.0
+    
+    // Emit along -Z (direction of wall normal)
+    emitter.emissionDirection = [0, 0, -1]
+    emitter.birthDirection = .local
+    
+    emitter.speed = 0.05
+    emitter.speedVariation = 0.02
+    
+    emitter.mainEmitter.size = 0.03
+    emitter.mainEmitter.sizeVariation = 0.02
+    emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 3.0
+    
+    emitter.mainEmitter.color = .evolving(
+        start: .single(.init(red: 0.1, green: 0.1, blue: 0.1, alpha: 0.3)),
+        end: .single(.init(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.0))
+    )
+    
     entity.components.set(emitter)
     return entity
 }

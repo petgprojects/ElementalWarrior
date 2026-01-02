@@ -1683,28 +1683,39 @@ final class HandTrackingManager {
         }
         
         rootEntity.addChild(explosion)
-        
-        // Add scorch mark if we have a normal
+
+        // Add scorch mark if we have a normal - spawns immediately with explosion
         if let normal = normal {
-            let scorch = createScorchMark()
-            // Position slightly off the wall to avoid z-fighting
-            scorch.position = position + normal * 0.01
-            
-            // Orient to face the normal
-            // look(at:from:) aligns -Z to the target direction
-            scorch.look(at: position + normal, from: position, relativeTo: nil)
-            
-            // The plane mesh is in XZ plane (normal +Y).
-            // We need to rotate it so its +Y aligns with the entity's -Z (which points along the wall normal)
-            // Rotating -90 degrees around X axis aligns +Y to -Z
-            scorch.orientation *= simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
-            
-            rootEntity.addChild(scorch)
-            
-            // Remove scorch mark after a delay
             Task {
-                try? await Task.sleep(for: .seconds(10))
-                scorch.removeFromParent()
+                let scorch = createScorchMark()
+                // Position slightly off the wall to avoid z-fighting
+                scorch.position = position + normal * 0.01
+
+                // Orient to face the normal
+                // look(at:from:) aligns -Z to the target direction
+                scorch.look(at: position + normal, from: position, relativeTo: nil)
+
+                // The plane mesh is in XZ plane (normal +Y).
+                // We need to rotate it so its +Y aligns with the entity's -Z (which points along the wall normal)
+                // Rotating -90 degrees around X axis aligns +Y to -Z
+                scorch.orientation *= simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
+
+                // Natural fade-in: start slightly smaller and grow
+                // This makes it feel like the soot is being deposited/settling
+                scorch.scale = [0.7, 0.7, 0.7]
+
+                rootEntity.addChild(scorch)
+
+                // Subtle grow animation for natural appearance
+                var transform = scorch.transform
+                transform.scale = [1.0, 1.0, 1.0]
+                scorch.move(to: transform, relativeTo: scorch.parent, duration: 0.5, timingFunction: .easeOut)
+
+                // Remove scorch mark after a delay
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    scorch.removeFromParent()
+                }
             }
         }
 

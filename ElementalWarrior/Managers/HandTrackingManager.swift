@@ -1697,9 +1697,9 @@ final class HandTrackingManager {
             try? await Task.sleep(for: .milliseconds(1500))
             
             // Fade out audio
-            audioController?.fade(to: -80, duration: 0.2)
+            audioController?.fade(to: -80, duration: 0.3)
             
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(300))
             explosion.removeFromParent()
         }
     }

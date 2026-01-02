@@ -164,8 +164,8 @@ final class HandTrackingManager {
             // Check if hand is open with palm facing up
             let shouldShowFireball = checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
 
-            // Check if hand is a fist (for punch detection)
-            let (isFist, _) = checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
+            // Check if hand is a fist (for punch detection) - returns debug info about WHY
+            let (isFist, fistDebugInfo) = checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
             
             // Get fist position early for collision checking
             let earlyFistPosition = getFistPosition(anchor: anchor, skeleton: skeleton)
@@ -180,6 +180,12 @@ final class HandTrackingManager {
                 (distToRightFireball != nil && distToRightFireball! < punchProximityThreshold)
             )
             
+            // Build combined debug info: distance + fist detection details
+            let distInfo = distToLeftFireball.map { "toL:\(String(format: "%.2f", $0))m" } ?? ""
+            let distInfo2 = distToRightFireball.map { "toR:\(String(format: "%.2f", $0))m" } ?? ""
+            let distString = [distInfo, distInfo2].filter { !$0.isEmpty }.joined(separator: " ")
+            let hasSkeleton = skeleton != nil
+            
             // Update debug gesture state for UI
             if isLeft {
                 if isCollidingWithFireball {
@@ -191,12 +197,8 @@ final class HandTrackingManager {
                 } else {
                     leftHandGestureState = .none
                 }
-                // Add distance info to debug
-                let distInfo = distToLeftFireball.map { "L:\(String(format: "%.2f", $0))m" } ?? ""
-                let distInfo2 = distToRightFireball.map { "R:\(String(format: "%.2f", $0))m" } ?? ""
-                if !distInfo.isEmpty || !distInfo2.isEmpty {
-                    leftDebugInfo = "dist: \(distInfo) \(distInfo2) (thresh: \(String(format: "%.2f", punchProximityThreshold))m)"
-                }
+                // Combined debug info: skeleton status + distance + fist info
+                leftDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebugInfo)"
             } else {
                 if isCollidingWithFireball {
                     rightHandGestureState = .collision
@@ -207,12 +209,8 @@ final class HandTrackingManager {
                 } else {
                     rightHandGestureState = .none
                 }
-                // Add distance info to debug
-                let distInfo = distToLeftFireball.map { "L:\(String(format: "%.2f", $0))m" } ?? ""
-                let distInfo2 = distToRightFireball.map { "R:\(String(format: "%.2f", $0))m" } ?? ""
-                if !distInfo.isEmpty || !distInfo2.isEmpty {
-                    rightDebugInfo = "dist: \(distInfo) \(distInfo2) (thresh: \(String(format: "%.2f", punchProximityThreshold))m)"
-                }
+                // Combined debug info: skeleton status + distance + fist info
+                rightDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebugInfo)"
             }
             
             // Debug: Log when we have a fireball and are checking for punches
@@ -632,7 +630,7 @@ final class HandTrackingManager {
 
         var debugParts: [String] = []
         var fistSignals = 0
-        let requiredSignals = 1  // Need at least 1 signal to consider it a fist
+        let requiredSignals = 3  // Need at least 3 signals to consider it a fist
         
         // METHOD 1: Finger alignment (relaxed threshold)
         // When ARKit estimates positions, alignment stays high (~0.7-0.9)
@@ -675,14 +673,7 @@ final class HandTrackingManager {
         }
         
         let isFist = fistSignals >= requiredSignals
-        let debugInfo = debugParts.joined(separator: " | ")
-        
-        // Update debug state
-        if isLeft {
-            leftDebugInfo = debugInfo
-        } else {
-            rightDebugInfo = debugInfo
-        }
+        let debugInfo = "\(fistSignals)/4: " + debugParts.joined(separator: " | ")
         
         let shouldLog = Int.random(in: 0..<30) == 0
         if shouldLog || isFist {
@@ -693,15 +684,11 @@ final class HandTrackingManager {
     }
     
     /// Check finger alignment using the standard approach
+    /// Note: Don't check isTracked - ARKit provides estimated positions even for occluded joints
     private func checkFingerAlignment(skeleton: HandSkeleton) -> (alignment: Float, detected: Bool) {
         let middleMetacarpal = skeleton.joint(.middleFingerMetacarpal)
         let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
         let middleIntermediateBase = skeleton.joint(.middleFingerIntermediateBase)
-        
-        guard middleMetacarpal.isTracked && middleKnuckle.isTracked && middleIntermediateBase.isTracked else {
-            // Fallback to index
-            return checkIndexAlignment(skeleton: skeleton)
-        }
         
         let metacarpalPos = extractPosition(from: middleMetacarpal.anchorFromJointTransform)
         let knucklePos = extractPosition(from: middleKnuckle.anchorFromJointTransform)
@@ -714,58 +701,46 @@ final class HandTrackingManager {
         return (alignment, alignment < 0.75)
     }
     
-    private func checkIndexAlignment(skeleton: HandSkeleton) -> (alignment: Float, detected: Bool) {
-        let indexMetacarpal = skeleton.joint(.indexFingerMetacarpal)
-        let indexKnuckle = skeleton.joint(.indexFingerKnuckle)
-        let indexIntermediateBase = skeleton.joint(.indexFingerIntermediateBase)
-        
-        guard indexMetacarpal.isTracked && indexKnuckle.isTracked && indexIntermediateBase.isTracked else {
-            return (1.0, false)
-        }
-        
-        let metacarpalPos = extractPosition(from: indexMetacarpal.anchorFromJointTransform)
-        let knucklePos = extractPosition(from: indexKnuckle.anchorFromJointTransform)
-        let intermediateBasePos = extractPosition(from: indexIntermediateBase.anchorFromJointTransform)
-        
-        let palmDirection = simd_normalize(knucklePos - metacarpalPos)
-        let fingerDirection = simd_normalize(intermediateBasePos - knucklePos)
-        let alignment = simd_dot(palmDirection, fingerDirection)
-        
-        return (alignment, alignment < 0.75)
-    }
-    
-    /// Check if thumb is curled (close to index finger base)
+    /// Check if thumb is curled toward palm (for fist detection)
+    /// In a regular fist, thumb wraps across fingers toward palm center
+    /// Note: Don't check isTracked - ARKit provides estimated positions even for occluded joints
     private func checkThumbCurl(skeleton: HandSkeleton) -> (isCurled: Bool, distance: Float) {
         let thumbTip = skeleton.joint(.thumbTip)
-        let indexKnuckle = skeleton.joint(.indexFingerKnuckle)
-        let indexMetacarpal = skeleton.joint(.indexFingerMetacarpal)
-        
-        guard thumbTip.isTracked && indexKnuckle.isTracked && indexMetacarpal.isTracked else {
-            return (false, 999)
-        }
+        let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
+        let middleIntermediateBase = skeleton.joint(.middleFingerIntermediateBase)
+        let wrist = skeleton.joint(.wrist)
         
         let thumbTipPos = extractPosition(from: thumbTip.anchorFromJointTransform)
-        let indexKnucklePos = extractPosition(from: indexKnuckle.anchorFromJointTransform)
-        let indexMetacarpalPos = extractPosition(from: indexMetacarpal.anchorFromJointTransform)
+        let middleKnucklePos = extractPosition(from: middleKnuckle.anchorFromJointTransform)
+        let middleIntermediatePos = extractPosition(from: middleIntermediateBase.anchorFromJointTransform)
+        let wristPos = extractPosition(from: wrist.anchorFromJointTransform)
         
-        // In a fist, thumb tip should be close to the side of index finger
-        let distToKnuckle = simd_distance(thumbTipPos, indexKnucklePos)
-        let distToMetacarpal = simd_distance(thumbTipPos, indexMetacarpalPos)
-        let minDist = min(distToKnuckle, distToMetacarpal)
+        // Method: Check if thumb tip is close to the curled finger area (middle finger intermediate)
+        // In a fist, thumb wraps over curled fingers, bringing tip close to middle of hand
+        let distToMiddleIntermediate = simd_distance(thumbTipPos, middleIntermediatePos)
         
-        // Thumb is curled if it's within ~5cm of index base
-        return (minDist < 0.06, minDist)
+        // Also check thumb curl by comparing thumb tip distance to wrist vs thumb knuckle to wrist
+        // When thumb is curled, the tip gets closer to wrist relative to the knuckle
+        let thumbTipToWrist = simd_distance(thumbTipPos, wristPos)
+        let middleKnuckleToWrist = simd_distance(middleKnucklePos, wristPos)
+        
+        // Thumb is curled if:
+        // 1. Thumb tip is close to middle finger area (within 7cm), OR
+        // 2. Thumb tip is closer to wrist than the middle knuckle (thumb folded in)
+        let isCloseToFingers = distToMiddleIntermediate < 0.07
+        let isFoldedIn = thumbTipToWrist < middleKnuckleToWrist
+        let isCurled = isCloseToFingers || isFoldedIn
+        
+        // Return the distance to middle finger area for debug display
+        return (isCurled, distToMiddleIntermediate)
     }
     
     /// Check if hand is compact (fingertips close to wrist compared to open hand)
+    /// Note: Don't check isTracked - ARKit provides estimated positions even for occluded joints
     private func checkHandCompactness(skeleton: HandSkeleton) -> (isCompact: Bool, ratio: Float) {
         let wrist = skeleton.joint(.wrist)
         let middleTip = skeleton.joint(.middleFingerTip)
         let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
-        
-        guard wrist.isTracked && middleTip.isTracked && middleKnuckle.isTracked else {
-            return (false, 999)
-        }
         
         let wristPos = extractPosition(from: wrist.anchorFromJointTransform)
         let tipPos = extractPosition(from: middleTip.anchorFromJointTransform)
@@ -773,6 +748,9 @@ final class HandTrackingManager {
         
         let tipToWrist = simd_distance(tipPos, wristPos)
         let knuckleToWrist = simd_distance(knucklePos, wristPos)
+        
+        // Prevent division by zero
+        guard knuckleToWrist > 0.001 else { return (false, 999) }
         
         // In an open hand, tip is much further from wrist than knuckle
         // In a fist, tip is closer to wrist (curled back)
@@ -785,15 +763,12 @@ final class HandTrackingManager {
     }
     
     /// Check if fingertips are clustered together (fist) vs spread out (open)
+    /// Note: Don't check isTracked - ARKit provides estimated positions even for occluded joints
     private func checkFingertipClustering(skeleton: HandSkeleton) -> (isClustered: Bool, spread: Float) {
         let indexTip = skeleton.joint(.indexFingerTip)
         let middleTip = skeleton.joint(.middleFingerTip)
         let ringTip = skeleton.joint(.ringFingerTip)
         let littleTip = skeleton.joint(.littleFingerTip)
-        
-        guard indexTip.isTracked && middleTip.isTracked && ringTip.isTracked && littleTip.isTracked else {
-            return (false, 999)
-        }
         
         let indexPos = extractPosition(from: indexTip.anchorFromJointTransform)
         let middlePos = extractPosition(from: middleTip.anchorFromJointTransform)

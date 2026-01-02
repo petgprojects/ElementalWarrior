@@ -10,6 +10,7 @@ import RealityKit
 
 struct HomeView: View {
 
+    @Environment(AppModel.self) private var appModel
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
@@ -19,7 +20,7 @@ struct HomeView: View {
                 let fireball = await createFireball()
                 content.add(fireball)
             }
-            .frame(height: 700)
+            .frame(height: 500)
             .frame(depth: 0.001, alignment: .front)
             .padding(.top, 24)
             .allowsHitTesting(false)
@@ -50,9 +51,73 @@ struct HomeView: View {
                     }
                     .buttonStyle(.bordered)
                 }
+                
+                // Debug panel for hand tracking
+                Divider()
+                    .padding(.vertical, 8)
+                
+                Text("Hand Tracking Debug")
+                    .font(.headline)
+                
+                HStack(spacing: 24) {
+                    // Left hand debug
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("LEFT HAND")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        Text(appModel.handTrackingManager.leftHandGestureState.rawValue)
+                            .font(.system(size: 20, weight: .bold, design: .monospaced))
+                            .foregroundColor(colorForState(appModel.handTrackingManager.leftHandGestureState))
+                        
+                        Text(appModel.handTrackingManager.leftDebugInfo)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .frame(maxWidth: 200, alignment: .leading)
+                    }
+                    .padding(12)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(8)
+                    
+                    // Right hand debug
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("RIGHT HAND")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        Text(appModel.handTrackingManager.rightHandGestureState.rawValue)
+                            .font(.system(size: 20, weight: .bold, design: .monospaced))
+                            .foregroundColor(colorForState(appModel.handTrackingManager.rightHandGestureState))
+                        
+                        Text(appModel.handTrackingManager.rightDebugInfo)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .frame(maxWidth: 200, alignment: .leading)
+                    }
+                    .padding(12)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(8)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(32)
+        }
+    }
+    
+    private func colorForState(_ state: HandGestureState) -> Color {
+        switch state {
+        case .none:
+            return .gray
+        case .fist:
+            return .red
+        case .summon:
+            return .yellow
+        case .holdingFireball:
+            return .orange
+        case .collision:
+            return .green
         }
     }
 

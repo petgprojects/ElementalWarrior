@@ -15,12 +15,14 @@ struct ElementalWarriorApp: App {
     var body: some Scene {
         WindowGroup(id: "home") {
             HomeView()
+                .environment(appModel)
         }
         .windowStyle(.plain)
         .defaultSize(width: 1000, height: 1000)
 
         ImmersiveSpace(id: "arena") {
             ArenaImmersiveView()
+                .environment(appModel)
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }

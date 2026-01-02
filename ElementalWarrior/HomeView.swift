@@ -59,7 +59,7 @@ struct HomeView: View {
                 Text("Hand Tracking Debug")
                     .font(.headline)
                 
-                HStack(spacing: 24) {
+                HStack(alignment: .top, spacing: 24) {
                     // Left hand debug
                     VStack(alignment: .leading, spacing: 4) {
                         Text("LEFT HAND")
@@ -71,10 +71,11 @@ struct HomeView: View {
                             .foregroundColor(colorForState(appModel.handTrackingManager.leftHandGestureState))
                         
                         Text(appModel.handTrackingManager.leftDebugInfo)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: 9, design: .monospaced))
                             .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                            .frame(maxWidth: 200, alignment: .leading)
+                            .lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: 280, alignment: .leading)
                     }
                     .padding(12)
                     .background(.ultraThinMaterial)
@@ -91,10 +92,11 @@ struct HomeView: View {
                             .foregroundColor(colorForState(appModel.handTrackingManager.rightHandGestureState))
                         
                         Text(appModel.handTrackingManager.rightDebugInfo)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: 9, design: .monospaced))
                             .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                            .frame(maxWidth: 200, alignment: .leading)
+                            .lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: 280, alignment: .leading)
                     }
                     .padding(12)
                     .background(.ultraThinMaterial)

@@ -10,6 +10,16 @@ import RealityKit
 import ARKit
 import QuartzCore
 
+// MARK: - Debug Hand State
+
+enum HandGestureState: String {
+    case none = "NONE"
+    case fist = "FIST"
+    case summon = "SUMMON"
+    case holdingFireball = "HOLDING"
+    case collision = "COLLISION"
+}
+
 // MARK: - Projectile State
 
 struct ProjectileState {
@@ -24,6 +34,7 @@ struct ProjectileState {
 // MARK: - Hand Tracking Manager
 
 @MainActor
+@Observable
 final class HandTrackingManager {
     let rootEntity = Entity()
 
@@ -42,10 +53,10 @@ final class HandTrackingManager {
     // MARK: - Timing Constants
 
     private let despawnDelayDuration: TimeInterval = 1.5       // Time before despawn after gesture ends
-    private let punchVelocityThreshold: Float = 1.5            // m/s minimum for punch detection
-    private let punchProximityThreshold: Float = 0.15          // meters - max distance from fireball center
-    private let fistExtensionThreshold: Float = 0.035          // meters - finger extension for closed fist
-    private let velocityHistoryDuration: TimeInterval = 0.1    // seconds of position history to keep
+    private let punchVelocityThreshold: Float = 0.5            // m/s minimum for punch detection (lowered for easier triggering)
+    private let punchProximityThreshold: Float = 0.50          // meters - max distance from fireball center (50cm for reliable detection)
+    private let fistExtensionThreshold: Float = 0.045          // meters - finger extension for closed fist (relaxed)
+    private let velocityHistoryDuration: TimeInterval = 0.15   // seconds of position history to keep
     private let projectileSpeed: Float = 12.0                  // m/s flight speed
     private let maxProjectileRange: Float = 20.0               // meters before auto-explode
     private let trackingLostGraceDuration: TimeInterval = 2.0  // seconds grace period for tracking loss
@@ -65,6 +76,12 @@ final class HandTrackingManager {
 
     private var leftHandState = HandState()
     private var rightHandState = HandState()
+    
+    // Debug state - observable for UI
+    var leftHandGestureState: HandGestureState = .none
+    var rightHandGestureState: HandGestureState = .none
+    var leftDebugInfo: String = ""
+    var rightDebugInfo: String = ""
 
     // MARK: - Initialization
 
@@ -148,28 +165,89 @@ final class HandTrackingManager {
             let shouldShowFireball = checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
 
             // Check if hand is a fist (for punch detection)
-            let isFist = checkHandIsFist(skeleton: skeleton)
+            let (isFist, debugInfo) = checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
+            
+            // Update debug gesture state for UI
+            if isLeft {
+                if isFist {
+                    leftHandGestureState = .fist
+                } else if shouldShowFireball {
+                    leftHandGestureState = leftHandState.isShowingFireball ? .holdingFireball : .summon
+                } else {
+                    leftHandGestureState = .none
+                }
+            } else {
+                if isFist {
+                    rightHandGestureState = .fist
+                } else if shouldShowFireball {
+                    rightHandGestureState = rightHandState.isShowingFireball ? .holdingFireball : .summon
+                } else {
+                    rightHandGestureState = .none
+                }
+            }
+            
+            // Debug: Log when we have a fireball and are checking for punches
+            let hasLeftFireball = leftHandState.fireball != nil
+            let hasRightFireball = rightHandState.fireball != nil
+            if (hasLeftFireball || hasRightFireball) && Int.random(in: 0..<60) == 0 {
+                print("[HAND UPDATE] \(isLeft ? "LEFT" : "RIGHT") - isFist=\(isFist), hasLeftFB=\(hasLeftFireball), hasRightFB=\(hasRightFireball), leftPending=\(leftHandState.isPendingDespawn), rightPending=\(rightHandState.isPendingDespawn)")
+            }
 
-            // Get palm position
+            // Get palm position (for fireball placement) and fist position (for punch detection)
             let palmPosition = getPalmPosition(anchor: anchor, skeleton: skeleton)
+            let fistPosition = getFistPosition(anchor: anchor, skeleton: skeleton)
 
             if isLeft {
                 // Handle tracking recovery if we had a grace period active
                 await handleTrackingRecovered(isLeft: true, position: palmPosition)
-                await updateLeftHand(shouldShow: shouldShowFireball, position: palmPosition, isFist: isFist, anchor: anchor)
+                await updateLeftHand(shouldShow: shouldShowFireball, position: palmPosition, fistPosition: fistPosition, isFist: isFist, anchor: anchor)
             } else {
                 await handleTrackingRecovered(isLeft: false, position: palmPosition)
-                await updateRightHand(shouldShow: shouldShowFireball, position: palmPosition, isFist: isFist, anchor: anchor)
+                await updateRightHand(shouldShow: shouldShowFireball, position: palmPosition, fistPosition: fistPosition, isFist: isFist, anchor: anchor)
             }
         }
     }
 
     // MARK: - Left Hand Update
 
-    private func updateLeftHand(shouldShow: Bool, position: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
-        // Track position history for velocity calculation
-        updatePositionHistory(for: &leftHandState, position: position)
+    private func updateLeftHand(shouldShow: Bool, position: SIMD3<Float>, fistPosition: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
+        // Track position history for velocity calculation (use fist position for more accurate punch velocity)
+        updatePositionHistory(for: &leftHandState, position: fistPosition)
 
+        // PRIORITY: Check for punch gesture FIRST - this should happen before any state transitions
+        // Same-hand punch: Check if this left fist can punch the left hand's own fireball
+        if isFist, let fireball = leftHandState.fireball,
+           (leftHandState.isShowingFireball || leftHandState.isPendingDespawn) && !leftHandState.isAnimating {
+            let velocity = calculateVelocity(from: leftHandState.lastPositions)
+            let speed = simd_length(velocity)
+            let distance = simd_distance(fistPosition, fireball.position)
+            
+            print("[LEFT SAME-HAND] isFist=\(isFist), speed=\(speed), distance=\(distance), threshold=\(punchProximityThreshold)")
+            
+            if speed > punchVelocityThreshold && distance < punchProximityThreshold {
+                print("[LEFT SAME-HAND] LAUNCHING FIREBALL!")
+                await launchFireball(from: .left)
+                return
+            }
+        }
+        
+        // Cross-hand punch: Check if this left fist can punch the RIGHT hand's fireball
+        if isFist, let rightFireball = rightHandState.fireball,
+           (rightHandState.isShowingFireball || rightHandState.isPendingDespawn) && !rightHandState.isAnimating {
+            let velocity = calculateVelocity(from: leftHandState.lastPositions)
+            let speed = simd_length(velocity)
+            let distance = simd_distance(fistPosition, rightFireball.position)
+            
+            print("[LEFT CROSS-HAND] isFist=\(isFist), speed=\(speed), distance=\(distance), threshold=\(punchProximityThreshold)")
+            
+            if speed > punchVelocityThreshold && distance < punchProximityThreshold {
+                print("[LEFT CROSS-HAND] LAUNCHING RIGHT FIREBALL!")
+                await launchFireball(from: .right)
+                return
+            }
+        }
+
+        // State transitions for spawning/despawning
         if shouldShow && !leftHandState.isShowingFireball && !leftHandState.isAnimating {
             // Cancel any pending despawn
             leftHandState.despawnTask?.cancel()
@@ -207,47 +285,54 @@ final class HandTrackingManager {
             }
 
         } else if leftHandState.isShowingFireball, let fireball = leftHandState.fireball, !leftHandState.isAnimating {
-            // Check for punch gesture while fireball exists (same hand or cross-hand)
-            if isFist {
-                let velocity = calculateVelocity(from: leftHandState.lastPositions)
-                if simd_length(velocity) > punchVelocityThreshold {
-                    let fireballPosition = fireball.position
-                    let distance = simd_distance(position, fireballPosition)
-
-                    if distance < punchProximityThreshold {
-                        await launchFireball(from: .left)
-                        return
-                    }
-                }
-            }
-
             // Update fireball position only if gesture is active (not pending despawn)
             if shouldShow {
                 fireball.position = position
             }
             // If pending despawn, fireball stays at last position (floats in place)
         }
-
-        // Cross-hand punch: Check if this hand (left) can punch the RIGHT hand's fireball
-        if isFist, let rightFireball = rightHandState.fireball,
-           (rightHandState.isShowingFireball || rightHandState.isPendingDespawn) && !rightHandState.isAnimating {
-            let velocity = calculateVelocity(from: leftHandState.lastPositions)
-            if simd_length(velocity) > punchVelocityThreshold {
-                let distance = simd_distance(position, rightFireball.position)
-                if distance < punchProximityThreshold {
-                    await launchFireball(from: .right)
-                    return
-                }
-            }
-        }
     }
 
     // MARK: - Right Hand Update
 
-    private func updateRightHand(shouldShow: Bool, position: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
-        // Track position history for velocity calculation
-        updatePositionHistory(for: &rightHandState, position: position)
+    private func updateRightHand(shouldShow: Bool, position: SIMD3<Float>, fistPosition: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
+        // Track position history for velocity calculation (use fist position for more accurate punch velocity)
+        updatePositionHistory(for: &rightHandState, position: fistPosition)
 
+        // PRIORITY: Check for punch gesture FIRST - this should happen before any state transitions
+        // Same-hand punch: Check if this right fist can punch the right hand's own fireball
+        if isFist, let fireball = rightHandState.fireball,
+           (rightHandState.isShowingFireball || rightHandState.isPendingDespawn) && !rightHandState.isAnimating {
+            let velocity = calculateVelocity(from: rightHandState.lastPositions)
+            let speed = simd_length(velocity)
+            let distance = simd_distance(fistPosition, fireball.position)
+            
+            print("[RIGHT SAME-HAND] isFist=\(isFist), speed=\(speed), distance=\(distance), threshold=\(punchProximityThreshold)")
+            
+            if speed > punchVelocityThreshold && distance < punchProximityThreshold {
+                print("[RIGHT SAME-HAND] LAUNCHING FIREBALL!")
+                await launchFireball(from: .right)
+                return
+            }
+        }
+        
+        // Cross-hand punch: Check if this right fist can punch the LEFT hand's fireball
+        if isFist, let leftFireball = leftHandState.fireball,
+           (leftHandState.isShowingFireball || leftHandState.isPendingDespawn) && !leftHandState.isAnimating {
+            let velocity = calculateVelocity(from: rightHandState.lastPositions)
+            let speed = simd_length(velocity)
+            let distance = simd_distance(fistPosition, leftFireball.position)
+            
+            print("[RIGHT CROSS-HAND] isFist=\(isFist), speed=\(speed), distance=\(distance), threshold=\(punchProximityThreshold)")
+            
+            if speed > punchVelocityThreshold && distance < punchProximityThreshold {
+                print("[RIGHT CROSS-HAND] LAUNCHING LEFT FIREBALL!")
+                await launchFireball(from: .left)
+                return
+            }
+        }
+
+        // State transitions for spawning/despawning
         if shouldShow && !rightHandState.isShowingFireball && !rightHandState.isAnimating {
             // Cancel any pending despawn
             rightHandState.despawnTask?.cancel()
@@ -285,38 +370,11 @@ final class HandTrackingManager {
             }
 
         } else if rightHandState.isShowingFireball, let fireball = rightHandState.fireball, !rightHandState.isAnimating {
-            // Check for punch gesture while fireball exists (same hand)
-            if isFist {
-                let velocity = calculateVelocity(from: rightHandState.lastPositions)
-                if simd_length(velocity) > punchVelocityThreshold {
-                    let fireballPosition = fireball.position
-                    let distance = simd_distance(position, fireballPosition)
-
-                    if distance < punchProximityThreshold {
-                        await launchFireball(from: .right)
-                        return
-                    }
-                }
-            }
-
             // Update fireball position only if gesture is active (not pending despawn)
             if shouldShow {
                 fireball.position = position
             }
             // If pending despawn, fireball stays at last position (floats in place)
-        }
-
-        // Cross-hand punch: Check if this hand (right) can punch the LEFT hand's fireball
-        if isFist, let leftFireball = leftHandState.fireball,
-           (leftHandState.isShowingFireball || leftHandState.isPendingDespawn) && !leftHandState.isAnimating {
-            let velocity = calculateVelocity(from: rightHandState.lastPositions)
-            if simd_length(velocity) > punchVelocityThreshold {
-                let distance = simd_distance(position, leftFireball.position)
-                if distance < punchProximityThreshold {
-                    await launchFireball(from: .left)
-                    return
-                }
-            }
         }
     }
 
@@ -536,38 +594,192 @@ final class HandTrackingManager {
 
     // MARK: - Gesture Detection
 
-    private func checkHandIsFist(skeleton: HandSkeleton?) -> Bool {
-        guard let skeleton = skeleton else { return false }
-
-        let middleTip = skeleton.joint(.middleFingerTip)
-        let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
-        let indexTip = skeleton.joint(.indexFingerTip)
-        let indexKnuckle = skeleton.joint(.indexFingerKnuckle)
-        let ringTip = skeleton.joint(.ringFingerTip)
-        let ringKnuckle = skeleton.joint(.ringFingerKnuckle)
-
-        guard middleTip.isTracked && middleKnuckle.isTracked &&
-              indexTip.isTracked && indexKnuckle.isTracked &&
-              ringTip.isTracked && ringKnuckle.isTracked else {
-            return false
+    /// Multi-method fist detection that works even when ARKit estimates occluded joints
+    /// Uses multiple signals since ARKit predicts joint positions even when occluded
+    private func checkHandIsFist(skeleton: HandSkeleton?, isLeft: Bool) -> (isFist: Bool, debugInfo: String) {
+        guard let skeleton = skeleton else { 
+            return (false, "no skeleton")
         }
 
-        let middleExtension = simd_distance(
-            extractPosition(from: middleTip.anchorFromJointTransform),
-            extractPosition(from: middleKnuckle.anchorFromJointTransform)
-        )
-        let indexExtension = simd_distance(
-            extractPosition(from: indexTip.anchorFromJointTransform),
-            extractPosition(from: indexKnuckle.anchorFromJointTransform)
-        )
-        let ringExtension = simd_distance(
-            extractPosition(from: ringTip.anchorFromJointTransform),
-            extractPosition(from: ringKnuckle.anchorFromJointTransform)
-        )
-
-        return middleExtension < fistExtensionThreshold &&
-               indexExtension < fistExtensionThreshold &&
-               ringExtension < fistExtensionThreshold
+        var debugParts: [String] = []
+        var fistSignals = 0
+        let requiredSignals = 1  // Need at least 1 signal to consider it a fist
+        
+        // METHOD 1: Finger alignment (relaxed threshold)
+        // When ARKit estimates positions, alignment stays high (~0.7-0.9)
+        // But a real curl might get down to 0.5-0.7
+        let alignmentResult = checkFingerAlignment(skeleton: skeleton)
+        if alignmentResult.alignment < 0.75 {  // VERY relaxed from 0.3
+            fistSignals += 1
+            debugParts.append("align:\(String(format: "%.2f", alignmentResult.alignment))✓")
+        } else {
+            debugParts.append("align:\(String(format: "%.2f", alignmentResult.alignment))")
+        }
+        
+        // METHOD 2: Thumb position - in a fist, thumb crosses in front of fingers
+        // Check if thumb tip is close to index finger side
+        let thumbResult = checkThumbCurl(skeleton: skeleton)
+        if thumbResult.isCurled {
+            fistSignals += 1
+            debugParts.append("thumb:curled✓")
+        } else {
+            debugParts.append("thumb:\(String(format: "%.2f", thumbResult.distance))")
+        }
+        
+        // METHOD 3: Hand compactness - fist is more compact than open hand
+        // Measure distance from wrist to fingertips vs wrist to knuckles
+        let compactResult = checkHandCompactness(skeleton: skeleton)
+        if compactResult.isCompact {
+            fistSignals += 1
+            debugParts.append("compact:\(String(format: "%.2f", compactResult.ratio))✓")
+        } else {
+            debugParts.append("compact:\(String(format: "%.2f", compactResult.ratio))")
+        }
+        
+        // METHOD 4: Fingertip clustering - in a fist, all fingertips are close together
+        let clusterResult = checkFingertipClustering(skeleton: skeleton)
+        if clusterResult.isClustered {
+            fistSignals += 1
+            debugParts.append("cluster:\(String(format: "%.2f", clusterResult.spread))✓")
+        } else {
+            debugParts.append("cluster:\(String(format: "%.2f", clusterResult.spread))")
+        }
+        
+        let isFist = fistSignals >= requiredSignals
+        let debugInfo = debugParts.joined(separator: " | ")
+        
+        // Update debug state
+        if isLeft {
+            leftDebugInfo = debugInfo
+        } else {
+            rightDebugInfo = debugInfo
+        }
+        
+        let shouldLog = Int.random(in: 0..<30) == 0
+        if shouldLog || isFist {
+            print("[FIST \(isLeft ? "L" : "R")] signals=\(fistSignals)/\(requiredSignals) -> \(isFist ? "FIST" : "open") | \(debugInfo)")
+        }
+        
+        return (isFist, debugInfo)
+    }
+    
+    /// Check finger alignment using the standard approach
+    private func checkFingerAlignment(skeleton: HandSkeleton) -> (alignment: Float, detected: Bool) {
+        let middleMetacarpal = skeleton.joint(.middleFingerMetacarpal)
+        let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
+        let middleIntermediateBase = skeleton.joint(.middleFingerIntermediateBase)
+        
+        guard middleMetacarpal.isTracked && middleKnuckle.isTracked && middleIntermediateBase.isTracked else {
+            // Fallback to index
+            return checkIndexAlignment(skeleton: skeleton)
+        }
+        
+        let metacarpalPos = extractPosition(from: middleMetacarpal.anchorFromJointTransform)
+        let knucklePos = extractPosition(from: middleKnuckle.anchorFromJointTransform)
+        let intermediateBasePos = extractPosition(from: middleIntermediateBase.anchorFromJointTransform)
+        
+        let palmDirection = simd_normalize(knucklePos - metacarpalPos)
+        let fingerDirection = simd_normalize(intermediateBasePos - knucklePos)
+        let alignment = simd_dot(palmDirection, fingerDirection)
+        
+        return (alignment, alignment < 0.75)
+    }
+    
+    private func checkIndexAlignment(skeleton: HandSkeleton) -> (alignment: Float, detected: Bool) {
+        let indexMetacarpal = skeleton.joint(.indexFingerMetacarpal)
+        let indexKnuckle = skeleton.joint(.indexFingerKnuckle)
+        let indexIntermediateBase = skeleton.joint(.indexFingerIntermediateBase)
+        
+        guard indexMetacarpal.isTracked && indexKnuckle.isTracked && indexIntermediateBase.isTracked else {
+            return (1.0, false)
+        }
+        
+        let metacarpalPos = extractPosition(from: indexMetacarpal.anchorFromJointTransform)
+        let knucklePos = extractPosition(from: indexKnuckle.anchorFromJointTransform)
+        let intermediateBasePos = extractPosition(from: indexIntermediateBase.anchorFromJointTransform)
+        
+        let palmDirection = simd_normalize(knucklePos - metacarpalPos)
+        let fingerDirection = simd_normalize(intermediateBasePos - knucklePos)
+        let alignment = simd_dot(palmDirection, fingerDirection)
+        
+        return (alignment, alignment < 0.75)
+    }
+    
+    /// Check if thumb is curled (close to index finger base)
+    private func checkThumbCurl(skeleton: HandSkeleton) -> (isCurled: Bool, distance: Float) {
+        let thumbTip = skeleton.joint(.thumbTip)
+        let indexKnuckle = skeleton.joint(.indexFingerKnuckle)
+        let indexMetacarpal = skeleton.joint(.indexFingerMetacarpal)
+        
+        guard thumbTip.isTracked && indexKnuckle.isTracked && indexMetacarpal.isTracked else {
+            return (false, 999)
+        }
+        
+        let thumbTipPos = extractPosition(from: thumbTip.anchorFromJointTransform)
+        let indexKnucklePos = extractPosition(from: indexKnuckle.anchorFromJointTransform)
+        let indexMetacarpalPos = extractPosition(from: indexMetacarpal.anchorFromJointTransform)
+        
+        // In a fist, thumb tip should be close to the side of index finger
+        let distToKnuckle = simd_distance(thumbTipPos, indexKnucklePos)
+        let distToMetacarpal = simd_distance(thumbTipPos, indexMetacarpalPos)
+        let minDist = min(distToKnuckle, distToMetacarpal)
+        
+        // Thumb is curled if it's within ~5cm of index base
+        return (minDist < 0.06, minDist)
+    }
+    
+    /// Check if hand is compact (fingertips close to wrist compared to open hand)
+    private func checkHandCompactness(skeleton: HandSkeleton) -> (isCompact: Bool, ratio: Float) {
+        let wrist = skeleton.joint(.wrist)
+        let middleTip = skeleton.joint(.middleFingerTip)
+        let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
+        
+        guard wrist.isTracked && middleTip.isTracked && middleKnuckle.isTracked else {
+            return (false, 999)
+        }
+        
+        let wristPos = extractPosition(from: wrist.anchorFromJointTransform)
+        let tipPos = extractPosition(from: middleTip.anchorFromJointTransform)
+        let knucklePos = extractPosition(from: middleKnuckle.anchorFromJointTransform)
+        
+        let tipToWrist = simd_distance(tipPos, wristPos)
+        let knuckleToWrist = simd_distance(knucklePos, wristPos)
+        
+        // In an open hand, tip is much further from wrist than knuckle
+        // In a fist, tip is closer to wrist (curled back)
+        // Ratio: tipDist / knuckleDist - lower means more curled
+        let ratio = tipToWrist / knuckleToWrist
+        
+        // Open hand: ratio ~1.5-2.0 (tip is further)
+        // Fist: ratio ~0.8-1.2 (tip is close to or behind knuckle)
+        return (ratio < 1.4, ratio)
+    }
+    
+    /// Check if fingertips are clustered together (fist) vs spread out (open)
+    private func checkFingertipClustering(skeleton: HandSkeleton) -> (isClustered: Bool, spread: Float) {
+        let indexTip = skeleton.joint(.indexFingerTip)
+        let middleTip = skeleton.joint(.middleFingerTip)
+        let ringTip = skeleton.joint(.ringFingerTip)
+        let littleTip = skeleton.joint(.littleFingerTip)
+        
+        guard indexTip.isTracked && middleTip.isTracked && ringTip.isTracked && littleTip.isTracked else {
+            return (false, 999)
+        }
+        
+        let indexPos = extractPosition(from: indexTip.anchorFromJointTransform)
+        let middlePos = extractPosition(from: middleTip.anchorFromJointTransform)
+        let ringPos = extractPosition(from: ringTip.anchorFromJointTransform)
+        let littlePos = extractPosition(from: littleTip.anchorFromJointTransform)
+        
+        // Calculate spread - max distance between any two fingertips
+        let d1 = simd_distance(indexPos, littlePos)
+        let d2 = simd_distance(indexPos, ringPos)
+        let d3 = simd_distance(middlePos, littlePos)
+        let maxSpread = max(d1, max(d2, d3))
+        
+        // Open hand: spread ~10-15cm
+        // Fist: spread ~3-6cm (fingers clustered)
+        return (maxSpread < 0.08, maxSpread)
     }
 
     private func checkShouldShowFireball(anchor: HandAnchor, skeleton: HandSkeleton?) -> Bool {
@@ -635,6 +847,21 @@ final class HandTrackingManager {
             jointTransform.columns.3.y + 0.08,
             jointTransform.columns.3.z
         )
+    }
+
+    // Get fist position for punch detection (without palm offset)
+    private func getFistPosition(anchor: HandAnchor, skeleton: HandSkeleton?) -> SIMD3<Float> {
+        guard let skeleton = skeleton else {
+            return extractPosition(from: anchor.originFromAnchorTransform)
+        }
+
+        let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
+        guard middleKnuckle.isTracked else {
+            return extractPosition(from: anchor.originFromAnchorTransform)
+        }
+
+        let jointTransform = anchor.originFromAnchorTransform * middleKnuckle.anchorFromJointTransform
+        return extractPosition(from: jointTransform)
     }
 
     private func extractPosition(from transform: simd_float4x4) -> SIMD3<Float> {

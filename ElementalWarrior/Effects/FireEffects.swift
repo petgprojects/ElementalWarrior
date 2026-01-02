@@ -21,9 +21,9 @@ import CoreGraphics
     typealias PlatformImage = UIImage
 #endif
 
-// Cache for the procedural scorch texture
+// Cache for the radial gradient texture used with irregular meshes
 // Set to nil to force regeneration with new parameters
-// INVALIDATED: Updated to use tight geometric bounds (0.5m mesh, 85% texture fill)
+// UPDATED: Now using enhanced radial gradient with burnt texture detail
 private var cachedScorchTexture: TextureResource? = nil
 
 // MARK: - Fireball Effect
@@ -346,7 +346,10 @@ func createScorchMark() -> Entity {
     } else {
         material.color = .init(tint: .black)
     }
-    material.blending = .transparent(opacity: 1.0)
+    material.blending = .transparent(opacity: 0.9)
+
+    // DEBUG: Force opacity to see actual mesh shape
+    // Uncomment to debug: material.color = .init(tint: .init(white: 0.1, alpha: 1.0))
 
     let model = ModelEntity(mesh: mesh, materials: [material])
 
@@ -365,55 +368,73 @@ func createScorchMark() -> Entity {
     return entity
 }
 
-/// Generate a unique irregular mesh for each soot mark
-/// The mesh geometry itself is shaped like a splatter - no rectangular bounds!
+/// Generate a unique irregular soot mark mesh - NO rectangular bounds
+/// Creates a circular disc with organic edge variation
 private func generateIrregularSootMesh() -> MeshResource {
-    // Generate random starburst/splatter shape
-    let pointCount = Int.random(in: 16...24) // Vary complexity
-    let baseRadius: Float = 0.15 // Base size ~30cm diameter
-    let radiusVariation: Float = 0.10 // Up to 10cm variation
+    let pointCount = 64 // Smooth circle
+    let baseRadius: Float = Float.random(in: 0.15...0.22) // 30-44cm diameter, varies per mark
 
     var vertices: [SIMD3<Float>] = []
     var indices: [UInt32] = []
     var normals: [SIMD3<Float>] = []
     var uvs: [SIMD2<Float>] = []
 
+    // Pre-generate smooth random radius variations
+    var radii: [Float] = []
+    for i in 0..<pointCount {
+        // Base variation
+        var r = Float.random(in: 0.88...1.12)
+        // Add some waviness for organic splatter look
+        let angle = Float(i) / Float(pointCount) * 2.0 * .pi
+        let wave1 = sin(angle * Float.random(in: 3...5)) * 0.08
+        let wave2 = sin(angle * Float.random(in: 7...9) + 1.0) * 0.04
+        r += wave1 + wave2
+        radii.append(r)
+    }
+
+    // Smooth the radii for organic edges
+    var smoothRadii: [Float] = []
+    for i in 0..<pointCount {
+        let p1 = (i - 2 + pointCount) % pointCount
+        let p2 = (i - 1 + pointCount) % pointCount
+        let n1 = (i + 1) % pointCount
+        let n2 = (i + 2) % pointCount
+        let avg = (radii[p1] + radii[p2] * 2 + radii[i] * 3 + radii[n1] * 2 + radii[n2]) / 9.0
+        smoothRadii.append(avg)
+    }
+
     // Center vertex
     vertices.append([0, 0, 0])
     normals.append([0, 1, 0])
-    uvs.append([0.5, 0.5]) // Center of texture
+    uvs.append([0.5, 0.5])
 
-    // Generate irregular perimeter points (starburst pattern)
+    // Outer vertices - create circle in XZ plane
     for i in 0..<pointCount {
-        let angle = (Float(i) / Float(pointCount)) * 2 * .pi
+        let angle = Float(i) / Float(pointCount) * 2.0 * .pi
+        let r = baseRadius * smoothRadii[i]
 
-        // Vary radius for irregular shape - some points jut out, others indent
-        let radiusModifier = Float.random(in: 0.6...1.4) // Wide variation
-        let noise = sin(angle * Float.random(in: 3...7)) * Float.random(in: 0.2...0.5)
-        let radius = baseRadius * radiusModifier + radiusVariation * noise
-
-        let x = cos(angle) * radius
-        let z = sin(angle) * radius
+        // Circle in XZ plane (Y=0)
+        let x = cos(angle) * r
+        let z = sin(angle) * r
 
         vertices.append([x, 0, z])
         normals.append([0, 1, 0])
 
-        // Map to texture coordinates (0 to 1)
-        let u = 0.5 + x / (baseRadius * 2.8)
-        let v = 0.5 + z / (baseRadius * 2.8)
+        // Map UVs based on position relative to max possible radius
+        let maxR = baseRadius * 1.3
+        let u = 0.5 + x / (maxR * 2.0)
+        let v = 0.5 + z / (maxR * 2.0)
         uvs.append([u, v])
     }
 
-    // Create triangles from center to perimeter (fan triangulation)
+    // Fan triangulation from center
     for i in 0..<pointCount {
-        let next = (i + 1) % pointCount
-        indices.append(0) // Center
+        indices.append(0) // center
         indices.append(UInt32(i + 1))
-        indices.append(UInt32(next + 1))
+        indices.append(UInt32((i + 1) % pointCount + 1))
     }
 
-    // Create mesh descriptor
-    var descriptor = MeshDescriptor(name: "IrregularSoot")
+    var descriptor = MeshDescriptor(name: "SootMark")
     descriptor.positions = MeshBuffer(vertices)
     descriptor.normals = MeshBuffer(normals)
     descriptor.textureCoordinates = MeshBuffer(uvs)
@@ -422,16 +443,16 @@ private func generateIrregularSootMesh() -> MeshResource {
     do {
         return try MeshResource.generate(from: [descriptor])
     } catch {
-        print("Failed to generate irregular soot mesh: \(error)")
-        // Fallback to simple circle
+        print("Mesh generation failed: \(error)")
+        // Fallback - but this shouldn't happen
         return MeshResource.generatePlane(width: 0.3, depth: 0.3, cornerRadius: 0.15)
     }
 }
 
-/// Generate a simple radial gradient texture for soft edges
+/// Generate a radial gradient texture with burnt soot detail
 private func generateRadialGradientTexture() -> TextureResource? {
-    let width = 256
-    let height = 256
+    let width = 512
+    let height = 512
     let bytesPerPixel = 4
     let bytesPerRow = bytesPerPixel * width
     let bitsPerComponent = 8
@@ -449,14 +470,31 @@ private func generateRadialGradientTexture() -> TextureResource? {
             // Distance from center
             let dist = sqrt(nx*nx + ny*ny)
 
-            // Smooth radial falloff with extra soft edges
-            let alpha = 1.0 - smoothstep(edge0: 0.0, edge1: 1.0, x: dist)
+            // Base radial gradient - solid center fading to edges
+            var alpha = 1.0 - smoothstep(edge0: 0.3, edge1: 1.0, x: dist)
 
-            // Add some noise for organic texture
-            let noise = sin(nx * 20.0) * cos(ny * 20.0) * 0.1
-            let finalAlpha = max(0, min(1, alpha + noise))
+            // Add burnt texture detail (high-frequency noise)
+            let texNoise = sin(nx * 40.0) * cos(ny * 40.0)
+            let turbulence = texNoise * 0.5 + 0.5
 
-            let pixelAlpha = UInt8(finalAlpha * 255)
+            // Center is more solid, edges are patchy (like burnt material)
+            let solidCore = 1.0 - smoothstep(edge0: 0.0, edge1: 0.6, x: dist)
+            let textureMix = solidCore * 0.95 + (1.0 - solidCore) * turbulence
+
+            alpha *= textureMix
+
+            // Add random grain for realism
+            let grain = Float.random(in: 0.85...1.0)
+            alpha *= grain
+
+            // Extra edge softness to prevent any visible boundary
+            if dist > 0.7 {
+                let distToEdge = 1.0 - dist
+                let edgeFade = smoothstep(edge0: 0.0, edge1: 0.3, x: distToEdge)
+                alpha *= edgeFade
+            }
+
+            let pixelAlpha = UInt8(max(0, min(255, alpha * 255)))
 
             // Black color with calculated alpha
             data[offset] = 0     // R

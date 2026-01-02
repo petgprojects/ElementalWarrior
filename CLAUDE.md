@@ -40,46 +40,70 @@ The app uses a dual-space architecture:
 
 ### Core Components
 
-**HandTrackingManager** (ArenaImmersiveView.swift:26-427)
-- Central system managing ARKit hand tracking and fireball state
-- Uses `ARKitSession` and `HandTrackingProvider` for real-time hand skeleton data
-- Maintains independent `HandState` for left and right hands
+**HandTrackingManager** (Managers/HandTrackingManager.swift)
+- Central system managing ARKit hand tracking, projectile launching, and collisions
+- Uses `ARKitSession` with `HandTrackingProvider`, `WorldTrackingProvider`, and `SceneReconstructionProvider`
+- Maintains independent `HandState` for left and right hands with intent-based delayed despawn
 - Spawns/extinguishes fireballs based on hand gestures (open palm facing up)
-- Preloads fireball template to avoid runtime performance hits
+- Punch detection: fist gesture + velocity threshold (1.5 m/s) to launch fireballs
+- Cross-hand punch support (punch with opposite hand)
+- Gaze-based targeting using device head direction
+- Projectile flight at 12 m/s with 20m max range
+- **Persistent mesh collision system** - scanned geometry stays in memory even when out of LiDAR range
+- Ray-triangle intersection (Möller–Trumbore algorithm) against cached mesh geometry
 - Transform pipeline: Joint space → Anchor space → World space
 
-**Fireball Creation** (FireballEntity.swift:13-82)
-- `createRealisticFireball()` generates multi-layered particle effect
-- Four particle emitters simulating realistic fire:
-  - White hot core (intense center)
-  - Yellow/orange inner flame (main body)
-  - Orange-red spikes (fast-moving tongues)
-  - Deep red outer flame (volume and smoke trail)
-- Includes PointLight component for environmental lighting
+**Persistent Room Scanning**
+- `CachedMeshGeometry` struct extracts and stores vertices + triangle indices from MeshAnchors
+- `persistentMeshCache: [UUID: CachedMeshGeometry]` - Geometry survives ARKit anchor removal
+- Users can scan entire room by walking around, then hit walls from anywhere
+- Visual scan overlay (semi-transparent cyan) shows scanned surfaces
+- UI controls: toggle visualization, clear scan data, view scan statistics
+
+**Fire Effects** (Effects/FireEffects.swift)
+- `createRealisticFireball()` - Multi-layered particle effect (4 layers)
+- `createFireTrail()` - Trail effect for flying projectiles
+- `createExplosionEffect()` - 5-layer explosion (flash, core, flame, outer, smoke)
+- All effects include PointLight components for environmental lighting
 - All particle properties scale proportionally for consistent visuals
 
 ### Hand Gesture Recognition
 
-The system detects "open palm facing up" gesture through:
+The system detects multiple gestures:
 
-1. **Palm Orientation** (checkPalmFacingUp:334-356): Transforms wrist joint to world space and checks if -Y axis (palm normal) has >0.4 dot product with world up vector
-2. **Hand Openness** (checkHandIsOpen:358-394): Measures tip-to-knuckle distance for index and middle fingers; >5cm threshold indicates extended fingers
+1. **Open Palm Facing Up** - Spawns fireball
+   - Palm orientation: wrist -Y axis dot product >0.4 with world up
+   - Hand openness: finger tip-to-knuckle distance >5cm
+
+2. **Fist Detection** - For punch-to-throw
+   - Finger extension <3.5cm threshold for index, middle, ring fingers
+
+3. **Punch Detection** - Launches fireball
+   - Fist + velocity >1.5 m/s + proximity within 15cm of fireball
+   - Supports cross-hand punching (punch with opposite hand)
 
 ### Entity State Management
 
-**Per-hand state tracking:**
+**Per-hand state tracking (HandState struct):**
 - `fireball: Entity?` - Reference to active fireball
 - `isShowingFireball: Bool` - Whether fireball is currently visible
 - `isAnimating: Bool` - Prevents concurrent animations
+- `despawnTask: Task<Void, Never>?` - Delayed despawn timer
+- `lastPositions: [(position, timestamp)]` - Position history for velocity calculation
+- `isPendingDespawn: Bool` - Fireball awaiting despawn (can still be punched)
+- `lastKnownPosition: SIMD3<Float>?` - Position before tracking loss
+- `isTrackingLost: Bool` - Whether hand tracking was lost
 
 **State transitions:**
 - Spawn: 0.5s scale animation (0.01 → 1.0)
+- Delayed despawn: 1.5s grace period after gesture ends (fireball floats, can be punched)
 - Extinguish: 0.1s shrink + smoke puff particle burst
 - Force extinguish: Immediate removal with smoke (used when tracking is lost)
+- Launch: Detach from hand, add trail effect, fly toward gaze at 12 m/s
 
 ### Smoke Puff System
 
-When fireballs extinguish (extinguishLeft/extinguishRight:163-239):
+When fireballs extinguish:
 1. Fireball shrinks over 0.1s
 2. Smoke puff entity spawns at same position
 3. Particle emitter bursts for 150ms
@@ -133,7 +157,6 @@ All emitters use:
 ### Current Limitations
 
 - Only fire element implemented (water, earth, air planned)
-- No projectile launching system yet (fireballs are static in palm)
 - No AI enemies or combat system
 - No health/damage mechanics
 - HomeView fireball is decorative only (not interactive)
@@ -145,8 +168,12 @@ ElementalWarrior/
 ├── ElementalWarriorApp.swift    # App entry, window/space definitions
 ├── AppModel.swift               # Observable state (currently minimal)
 ├── HomeView.swift               # Menu window with decorative fireball
-├── ArenaImmersiveView.swift     # Hand tracking + gameplay logic
-└── FireballEntity.swift         # Particle emitter factory functions
+├── ArenaImmersiveView.swift     # Immersive view setup
+├── Info.plist                   # App permissions (hand/world sensing)
+├── Managers/
+│   └── HandTrackingManager.swift  # Hand tracking, gestures, projectiles, collisions
+└── Effects/
+    └── FireEffects.swift          # Fireball, trail, explosion particle effects
 ```
 
 ## Reality Composer Pro Assets

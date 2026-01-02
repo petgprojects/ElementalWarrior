@@ -18,4 +18,7 @@ class AppModel {
         case open
     }
     var immersiveSpaceState = ImmersiveSpaceState.closed
+    
+    // Shared hand tracking manager for debug visibility
+    let handTrackingManager = HandTrackingManager()
 }

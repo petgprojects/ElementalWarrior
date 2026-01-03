@@ -29,13 +29,14 @@ private var cachedScorchTexture: TextureResource? = nil
 // MARK: - Scorch Mark Effect
 
 /// Creates a multi-layered scorch mark with procedural texture, ember glow, and smoke
+/// - Parameter scale: Scale multiplier for the scorch mark (1.0 = normal, 2.0 = mega fireball)
 @MainActor
-func createScorchMark() -> Entity {
+func createScorchMark(scale: Float = 1.0) -> Entity {
     let entity = Entity()
     entity.name = "ScorchMark"
 
-    // Generate unique irregular mesh
-    let mesh = generateIrregularSootMesh()
+    // Generate unique irregular mesh with scaled size
+    let mesh = generateIrregularSootMesh(scale: scale)
 
     let baseTint = SIMD3<Float>(0.04, 0.03, 0.025)
     let baseAlpha: Float = 1.0
@@ -133,9 +134,9 @@ func createScorchMark() -> Entity {
         )
     }
 
-    // Lingering Smoke Effect
-    let smoke = createLingeringSmoke()
-    smoke.position = [0, 0, 0.02]
+    // Lingering Smoke Effect (scaled)
+    let smoke = createLingeringSmoke(scale: scale)
+    smoke.position = [0, 0, 0.02 * scale]
     entity.addChild(smoke)
 
     return entity
@@ -144,9 +145,10 @@ func createScorchMark() -> Entity {
 // MARK: - Irregular Soot Mesh Generation
 
 /// Generate a unique irregular soot mark mesh with organic edge variation
-private func generateIrregularSootMesh() -> MeshResource {
+/// - Parameter scale: Scale multiplier for the mesh size (1.0 = normal, 2.0 = mega fireball)
+private func generateIrregularSootMesh(scale: Float = 1.0) -> MeshResource {
     let pointCount = 96
-    let baseRadius: Float = Float.random(in: 0.13...0.22)
+    let baseRadius: Float = Float.random(in: 0.13...0.22) * scale
 
     var vertices: [SIMD3<Float>] = []
     var indices: [UInt32] = []
@@ -389,28 +391,29 @@ func smoothstep(edge0: Float, edge1: Float, x: Float) -> Float {
 // MARK: - Lingering Smoke
 
 /// Creates lingering smoke that rises from the scorch mark
-private func createLingeringSmoke() -> Entity {
+/// - Parameter scale: Scale multiplier for the smoke effect (1.0 = normal, 2.0 = mega fireball)
+private func createLingeringSmoke(scale: Float = 1.0) -> Entity {
     let entity = Entity()
 
     var emitter = ParticleEmitterComponent()
     emitter.timing = .repeating(warmUp: 0, emit: .init(duration: 2.0))
 
     emitter.emitterShape = .sphere
-    emitter.emitterShapeSize = [0.06, 0.06, 0.06]
+    emitter.emitterShapeSize = [0.06 * scale, 0.06 * scale, 0.06 * scale]
 
-    emitter.mainEmitter.birthRate = 8
+    emitter.mainEmitter.birthRate = 8 * scale
     emitter.mainEmitter.lifeSpan = 2.5
     emitter.mainEmitter.lifeSpanVariation = 0.6
 
     emitter.emissionDirection = [0, 0, 1]
     emitter.birthDirection = .local
 
-    emitter.speed = 0.035
-    emitter.speedVariation = 0.015
-    emitter.mainEmitter.acceleration = [0.0, 0.02, 0.05]
+    emitter.speed = 0.035 * scale
+    emitter.speedVariation = 0.015 * scale
+    emitter.mainEmitter.acceleration = [0.0, 0.02 * scale, 0.05 * scale]
 
-    emitter.mainEmitter.size = 0.028
-    emitter.mainEmitter.sizeVariation = 0.02
+    emitter.mainEmitter.size = 0.028 * scale
+    emitter.mainEmitter.sizeVariation = 0.02 * scale
     emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 2.6
 
     emitter.mainEmitter.color = .evolving(

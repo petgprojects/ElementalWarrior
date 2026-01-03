@@ -701,8 +701,9 @@ final class HandTrackingManager {
 
         guard let flamethrower = state.flamethrower else { return }
 
-        let direction = simd_normalize(palmNormal)
-        let origin = position + direction * 0.05
+        // Slight upward bias to keep the jet aligned with palm instead of dipping
+        let direction = simd_normalize(palmNormal + SIMD3<Float>(0, 0.08, 0))
+        let origin = position + direction * 0.02  // bring emission closer to palm
 
         let maxRange = GestureConstants.flamethrowerRange
         let hit = CollisionSystem.raycastBeam(

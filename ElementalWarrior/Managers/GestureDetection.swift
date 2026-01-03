@@ -167,19 +167,7 @@ enum GestureDetection {
 
     /// Check if palm is facing upward by examining wrist orientation
     static func checkPalmFacingUp(anchor: HandAnchor, skeleton: HandSkeleton) -> Bool {
-        let wrist = skeleton.joint(.wrist)
-        guard wrist.isTracked else { return false }
-
-        let worldWristTransform = anchor.originFromAnchorTransform * wrist.anchorFromJointTransform
-        let isLeftHand = anchor.chirality == .left
-        let yAxisMultiplier: Float = isLeftHand ? 1.0 : -1.0
-
-        let palmNormal = SIMD3<Float>(
-            yAxisMultiplier * worldWristTransform.columns.1.x,
-            yAxisMultiplier * worldWristTransform.columns.1.y,
-            yAxisMultiplier * worldWristTransform.columns.1.z
-        )
-
+        guard let palmNormal = getPalmNormal(anchor: anchor, skeleton: skeleton) else { return false }
         let worldUp = SIMD3<Float>(0, 1, 0)
         let dotProduct = simd_dot(simd_normalize(palmNormal), worldUp)
         return dotProduct > 0.4
@@ -207,6 +195,62 @@ enum GestureDetection {
 
         let extensionThreshold: Float = 0.05
         return middleExtension > extensionThreshold && indexExtension > extensionThreshold
+    }
+
+    /// Check if the hand should emit a flamethrower (open palm facing forward, away from user)
+    static func checkShouldFireFlamethrower(
+        anchor: HandAnchor,
+        skeleton: HandSkeleton?,
+        deviceTransform: simd_float4x4?
+    ) -> Bool {
+        guard let skeleton = skeleton else { return false }
+        let isHandOpen = checkHandIsOpen(skeleton: skeleton)
+        let isFacingForward = checkPalmFacingForward(anchor: anchor, skeleton: skeleton, deviceTransform: deviceTransform)
+        return isHandOpen && isFacingForward
+    }
+
+    /// Compute palm normal in world space (points outward from the palm)
+    static func getPalmNormal(anchor: HandAnchor, skeleton: HandSkeleton?) -> SIMD3<Float>? {
+        guard let skeleton = skeleton else { return nil }
+        let wrist = skeleton.joint(.wrist)
+        guard wrist.isTracked else { return nil }
+
+        let worldWristTransform = anchor.originFromAnchorTransform * wrist.anchorFromJointTransform
+        let isLeftHand = anchor.chirality == .left
+        let yAxisMultiplier: Float = isLeftHand ? 1.0 : -1.0
+
+        let palmNormal = SIMD3<Float>(
+            yAxisMultiplier * worldWristTransform.columns.1.x,
+            yAxisMultiplier * worldWristTransform.columns.1.y,
+            yAxisMultiplier * worldWristTransform.columns.1.z
+        )
+        return simd_normalize(palmNormal)
+    }
+
+    /// Check if palm is roughly aligned with the headset forward vector (stop-sign pose)
+    static func checkPalmFacingForward(
+        anchor: HandAnchor,
+        skeleton: HandSkeleton,
+        deviceTransform: simd_float4x4?
+    ) -> Bool {
+        guard let palmNormal = getPalmNormal(anchor: anchor, skeleton: skeleton) else { return false }
+
+        let worldForward: SIMD3<Float>
+        if let deviceTransform = deviceTransform {
+            worldForward = SIMD3<Float>(
+                -deviceTransform.columns.2.x,
+                -deviceTransform.columns.2.y,
+                -deviceTransform.columns.2.z
+            )
+        } else {
+            worldForward = SIMD3<Float>(0, 0, -1)
+        }
+
+        let alignment = simd_dot(simd_normalize(palmNormal), simd_normalize(worldForward))
+        let verticalAlignment = abs(simd_dot(palmNormal, SIMD3<Float>(0, 1, 0)))
+
+        return alignment > GestureConstants.flamethrowerForwardDotThreshold &&
+            verticalAlignment < GestureConstants.flamethrowerUpRejectThreshold
     }
 
     // MARK: - Position Helpers

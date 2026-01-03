@@ -31,6 +31,7 @@ final class HandTrackingManager {
 
     // Audio Resources
     private var crackleSound: AudioFileResource?
+    private var flamethrowerSound: AudioFileResource?
     private var wooshSound: AudioFileResource?
     private var explosionSound: AudioFileResource?
 
@@ -131,6 +132,7 @@ final class HandTrackingManager {
 
     private func loadAudioResources() async {
         crackleSound = await loadAudio(named: "fire_crackle", ext: "wav", shouldLoop: true)
+        flamethrowerSound = await loadAudio(named: "flamethrower_clipped", ext: "wav", shouldLoop: true)
         wooshSound = await loadAudio(named: "fire_woosh_clipped", ext: "wav", shouldLoop: false)
         explosionSound = await loadAudio(named: "explosion_clipped", ext: "wav", shouldLoop: false)
     }
@@ -689,10 +691,10 @@ final class HandTrackingManager {
             stream.transform.scale = [1, 1, 1]
             rootEntity.addChild(stream)
 
-            if state.flamethrowerAudio == nil, let crackle = crackleSound {
-                let controller = stream.playAudio(crackle)
-                controller.gain = -6
-                controller.fade(to: -2, duration: 0.2)
+            if state.flamethrowerAudio == nil, let flame = flamethrowerSound {
+                let controller = stream.playAudio(flame)
+                controller.gain = -80
+                controller.fade(to: 0, duration: 0.5)
                 state.flamethrowerAudio = controller
             }
 
@@ -746,15 +748,37 @@ final class HandTrackingManager {
 
         guard state.isUsingFlamethrower || state.flamethrower != nil else { return }
 
+        let flamethrowerEntity = state.flamethrower
+
         if let audio = state.flamethrowerAudio {
-            audio.fade(to: -80, duration: 0.2)
+            audio.fade(to: -80, duration: 0.5)
             Task {
-                try? await Task.sleep(for: .milliseconds(240))
+                try? await Task.sleep(for: .milliseconds(520))
                 audio.stop()
             }
         }
 
-        state.flamethrower?.removeFromParent()
+        if let stream = flamethrowerEntity {
+            Task { @MainActor in
+                await fadeOutScorch(stream, duration: 0.5)
+                stream.removeFromParent()
+            }
+
+            let smoke = await createFlamethrowerShutdownSmoke()
+            smoke.transform = stream.transform
+            rootEntity.addChild(smoke)
+
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                if var emitter = smoke.components[ParticleEmitterComponent.self] {
+                    emitter.mainEmitter.birthRate = 0
+                    smoke.components.set(emitter)
+                }
+                try? await Task.sleep(for: .milliseconds(1100))
+                smoke.removeFromParent()
+            }
+        }
+
         state.flamethrower = nil
         state.flamethrowerAudio = nil
         state.isUsingFlamethrower = false

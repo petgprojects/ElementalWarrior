@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `ElementalWarrior/` contains the SwiftUI app code and VisionOS logic.
 - `ElementalWarrior/Managers/` holds gesture recognition, hand tracking, and collision systems.
-- `ElementalWarrior/Effects/` contains particle and VFX builders for fire, explosions, and scorch marks.
+- `ElementalWarrior/Effects/` contains particle and VFX builders for fire, explosions, scorch marks, and flamethrower streams.
 - `ElementalWarrior/Assets.xcassets/` stores images, audio, and app icons.
 - `Packages/RealityKitContent/` includes the RealityKit content package and .rkassets.
 - `ElementalWarrior.xcodeproj/` is the Xcode project entry point.

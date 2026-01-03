@@ -37,6 +37,7 @@ struct HandState {
     var lastFlamethrowerHitDistance: Float = GestureConstants.flamethrowerRange
     var lastFlamethrowerRaycastTime: TimeInterval = 0
     var flamethrowerDespawnTask: Task<Void, Never>?
+    var isPartOfCombinedFlamethrower: Bool = false  // True when this hand's flamethrower is merged
 
     // Fields for throwing system
     var despawnTask: Task<Void, Never>?
@@ -110,4 +111,10 @@ enum GestureConstants {
     static let flamethrowerScorchLifetime: TimeInterval = 6.0 // seconds before scorch fades
     static let flamethrowerRaycastInterval: TimeInterval = 0.04 // seconds between beam raycasts (per hand)
     static let flamethrowerTrackingGraceDuration: TimeInterval = 0.5 // seconds before despawn after tracking loss
+
+    // Combined flamethrower constants
+    static let flamethrowerCombineDistance: Float = 0.15      // meters to combine flamethrowers (same as fireballs)
+    static let combinedFlamethrowerJetIntensity: Float = 1.5  // jet intensity multiplier when combined
+    static let combinedFlamethrowerMuzzleScale: Float = 1.0   // full-size muzzle when combined (vs 0.5 for single)
+    static let combinedFlamethrowerAudioBoost: Double = 3.0   // dB boost for combined flamethrower sound
 }

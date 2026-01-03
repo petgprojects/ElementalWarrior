@@ -100,8 +100,8 @@ enum GestureConstants {
 
     // Flamethrower constants
     static let flamethrowerRange: Float = 8.0                 // meters max flame reach
-    static let flamethrowerForwardDotThreshold: Float = 0.55  // palm alignment with gaze
-    static let flamethrowerUpRejectThreshold: Float = 0.35    // reject if palm is too upward/downward
+    static let flamethrowerForwardDotThreshold: Float = 0.28  // palm alignment with gaze (lower = more forgiving)
+    static let flamethrowerUpRejectThreshold: Float = 0.6     // allow more tilt before rejecting
     static let flamethrowerScorchCooldown: TimeInterval = 0.35 // seconds between scorch spawns
     static let flamethrowerScorchScale: Float = 0.55          // default scorch size for flame hits
     static let flamethrowerScorchLifetime: TimeInterval = 6.0 // seconds before scorch fades

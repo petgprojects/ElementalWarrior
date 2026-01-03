@@ -1712,7 +1712,8 @@ final class HandTrackingManager {
 
                 // Remove scorch mark after a delay
                 Task {
-                    try? await Task.sleep(for: .seconds(10))
+                    try? await Task.sleep(for: .seconds(16))
+                    await fadeOutScorch(scorch, duration: 1.0)
                     scorch.removeFromParent()
                 }
             }
@@ -1744,6 +1745,20 @@ final class HandTrackingManager {
             
             try? await Task.sleep(for: .milliseconds(300))
             explosion.removeFromParent()
+        }
+    }
+
+    @MainActor
+    private func fadeOutScorch(_ entity: Entity, duration: Double) async {
+        let steps = 20
+        let stepDuration = duration / Double(steps)
+
+        entity.components.set(OpacityComponent(opacity: 1.0))
+        for step in 0..<steps {
+            guard entity.parent != nil else { return }
+            let t = Float(1.0 - Double(step + 1) / Double(steps))
+            entity.components.set(OpacityComponent(opacity: t))
+            try? await Task.sleep(for: .seconds(stepDuration))
         }
     }
 

@@ -21,6 +21,10 @@ import CoreGraphics
     typealias PlatformImage = UIImage
 #endif
 
+private func rgba(_ r: Double, _ g: Double, _ b: Double, _ a: Double) -> PlatformColor {
+    PlatformColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: CGFloat(a))
+}
+
 // Cache for the radial gradient texture used with irregular meshes
 // Set to nil to force regeneration with new parameters
 // UPDATED: Now using enhanced radial gradient with burnt texture detail
@@ -335,6 +339,10 @@ func createScorchMark() -> Entity {
     // Generate unique irregular mesh - no rectangular bounds!
     let mesh = generateIrregularSootMesh()
 
+    let baseTint = SIMD3<Float>(0.04, 0.03, 0.025)
+    let baseAlpha: Float = 1.0
+    let baseOpacity: Float = 0.78
+
     // Create or reuse radial gradient texture for soft edges
     if cachedScorchTexture == nil {
         cachedScorchTexture = generateRadialGradientTexture()
@@ -342,11 +350,16 @@ func createScorchMark() -> Entity {
 
     var material = UnlitMaterial()
     if let texture = cachedScorchTexture {
-        material.color = .init(tint: .init(white: 0.02, alpha: 1.0), texture: .init(texture))
+        material.color = .init(
+            tint: rgba(Double(baseTint.x), Double(baseTint.y), Double(baseTint.z), Double(baseAlpha)),
+            texture: .init(texture)
+        )
     } else {
-        material.color = .init(tint: .init(white: 0.02, alpha: 1.0))
+        material.color = .init(
+            tint: rgba(Double(baseTint.x), Double(baseTint.y), Double(baseTint.z), Double(baseAlpha))
+        )
     }
-    material.blending = .transparent(opacity: 0.9)
+    material.blending = .transparent(opacity: .init(floatLiteral: baseOpacity))
 
     // DEBUG: Force opacity to see actual mesh shape
     // Uncomment to debug: material.color = .init(tint: .init(white: 0.1, alpha: 1.0))
@@ -360,15 +373,49 @@ func createScorchMark() -> Entity {
     entity.addChild(baseModel)
 
     if let texture = cachedScorchTexture {
-        var glowMaterial = UnlitMaterial()
-        glowMaterial.color = .init(
-            tint: .init(red: 1.0, green: 0.55, blue: 0.2, alpha: 0.7),
+        var blendMaterial = UnlitMaterial()
+        blendMaterial.color = .init(
+            tint: rgba(0.14, 0.1, 0.08, 0.5),
             texture: .init(texture)
         )
-        glowMaterial.blending = .transparent(opacity: 0.8)
+        blendMaterial.blending = .transparent(opacity: .init(floatLiteral: 0.45))
+
+        let blendModel = ModelEntity(mesh: mesh, materials: [blendMaterial])
+        let blendScale = Float.random(in: 0.88...1.02)
+        blendModel.scale = [blendScale, blendScale, 1.0]
+        blendModel.orientation = simd_quatf(
+            angle: randomAngle + Float.random(in: -0.2...0.2),
+            axis: [0, 0, 1]
+        )
+        blendModel.position = [0, 0, 0.001]
+        entity.addChild(blendModel)
+
+        var featherMaterial = UnlitMaterial()
+        featherMaterial.color = .init(
+            tint: rgba(0.18, 0.13, 0.1, 0.35),
+            texture: .init(texture)
+        )
+        featherMaterial.blending = .transparent(opacity: .init(floatLiteral: 0.32))
+
+        let featherModel = ModelEntity(mesh: mesh, materials: [featherMaterial])
+        let featherScale = Float.random(in: 1.04...1.18)
+        featherModel.scale = [featherScale, featherScale, 1.0]
+        featherModel.orientation = simd_quatf(
+            angle: randomAngle + Float.random(in: -0.2...0.2),
+            axis: [0, 0, 1]
+        )
+        featherModel.position = [0, 0, 0.0005]
+        entity.addChild(featherModel)
+
+        var glowMaterial = UnlitMaterial()
+        glowMaterial.color = .init(
+            tint: rgba(1.0, 0.55, 0.2, 0.7),
+            texture: .init(texture)
+        )
+        glowMaterial.blending = .transparent(opacity: .init(floatLiteral: 0.8))
 
         let glowModel = ModelEntity(mesh: mesh, materials: [glowMaterial])
-        let glowScale = Float.random(in: 0.72...0.95)
+        let glowScale = Float.random(in: 0.96...1.1)
         let glowBaseScale: SIMD3<Float> = [glowScale, glowScale, 1.0]
         glowModel.scale = glowBaseScale
         glowModel.orientation = simd_quatf(
@@ -381,7 +428,10 @@ func createScorchMark() -> Entity {
             model: glowModel,
             texture: texture,
             baseScale: glowBaseScale,
-            intensityScale: 0.75
+            intensityScale: 0.7,
+            baseTint: baseTint,
+            baseAlpha: baseAlpha,
+            baseOpacity: baseOpacity
         )
     }
 
@@ -776,31 +826,51 @@ private func animateEmberGlow(
     model: ModelEntity,
     texture: TextureResource,
     baseScale: SIMD3<Float>,
-    intensityScale: Double
+    intensityScale: Double,
+    baseTint: SIMD3<Float>,
+    baseAlpha: Float,
+    baseOpacity: Float
 ) {
     Task { @MainActor in
         let start = Date()
-        let duration = Double.random(in: 6.0...8.5)
+        let duration = Double.random(in: 7.0...9.0)
         let phase = Double.random(in: 0...(2.0 * Double.pi))
 
         while Date().timeIntervalSince(start) < duration {
             guard model.parent != nil else { break }
             let t = Date().timeIntervalSince(start)
-            let cooling = max(0.0, 1.0 - t / duration)
+            let progress = Float(t / duration)
+            let fade = 1.0 - smoothstep(edge0: 0.55, edge1: 1.0, x: progress)
             let pulse = 0.5 + 0.5 * sin(t * 5.0 + phase)
             let flicker = Double.random(in: -0.12...0.12)
-            let intensity = max(0.0, min(1.0, (pulse + flicker) * cooling * intensityScale))
+            let intensity = max(
+                0.0,
+                min(1.0, (pulse + flicker) * Double(fade) * intensityScale)
+            )
 
-            let green = 0.15 + 0.75 * intensity
-            let blue = 0.03 + 0.3 * intensity
-            let alpha = 0.1 + 0.7 * intensity
+            let baseR = Double(baseTint.x)
+            let baseG = Double(baseTint.y)
+            let baseB = Double(baseTint.z)
+            let baseA = Double(baseAlpha)
+
+            let heatR = 1.0
+            let heatG = 0.15 + 0.75 * intensity
+            let heatB = 0.03 + 0.3 * intensity
+            let heatA = 0.1 + 0.7 * intensity
+
+            let mix = intensity
+            let red = baseR + (heatR - baseR) * mix
+            let green = baseG + (heatG - baseG) * mix
+            let blue = baseB + (heatB - baseB) * mix
+            let alpha = baseA + (heatA - baseA) * mix
 
             var material = UnlitMaterial()
             material.color = .init(
-                tint: .init(red: 1.0, green: green, blue: blue, alpha: alpha),
+                tint: rgba(red, green, blue, alpha),
                 texture: .init(texture)
             )
-            material.blending = .transparent(opacity: 0.85)
+            let opacity = Double(baseOpacity) + (0.85 - Double(baseOpacity)) * mix
+            material.blending = .transparent(opacity: .init(floatLiteral: Float(opacity)))
 
             if var modelComponent = model.model {
                 modelComponent.materials = [material]
@@ -814,12 +884,52 @@ private func animateEmberGlow(
         }
 
         guard model.parent != nil else { return }
+        let fadeSteps = 20
+        for step in 0..<fadeSteps {
+            guard model.parent != nil else { break }
+            let mix = 1.0 - Double(step + 1) / Double(fadeSteps)
+            let intensity = max(0.0, min(1.0, mix)) * intensityScale
+
+            let baseR = Double(baseTint.x)
+            let baseG = Double(baseTint.y)
+            let baseB = Double(baseTint.z)
+            let baseA = Double(baseAlpha)
+
+            let heatR = 1.0
+            let heatG = 0.15 + 0.75 * intensity
+            let heatB = 0.03 + 0.3 * intensity
+            let heatA = 0.1 + 0.7 * intensity
+
+            let red = baseR + (heatR - baseR) * intensity
+            let green = baseG + (heatG - baseG) * intensity
+            let blue = baseB + (heatB - baseB) * intensity
+            let alpha = baseA + (heatA - baseA) * intensity
+
+            var material = UnlitMaterial()
+            material.color = .init(
+                tint: rgba(red, green, blue, alpha),
+                texture: .init(texture)
+            )
+            let opacity = Double(baseOpacity) + (0.85 - Double(baseOpacity)) * intensity
+            material.blending = .transparent(opacity: .init(floatLiteral: Float(opacity)))
+
+            if var modelComponent = model.model {
+                modelComponent.materials = [material]
+                model.model = modelComponent
+            }
+
+            let scalePulse = Float(1.0 + 0.02 * Float(mix))
+            model.scale = baseScale * scalePulse
+            try? await Task.sleep(for: .milliseconds(70))
+        }
+
+        guard model.parent != nil else { return }
         var material = UnlitMaterial()
         material.color = .init(
-            tint: .init(red: 0.25, green: 0.07, blue: 0.03, alpha: 0.2),
+            tint: rgba(Double(baseTint.x), Double(baseTint.y), Double(baseTint.z), Double(baseAlpha)),
             texture: .init(texture)
         )
-        material.blending = .transparent(opacity: 0.5)
+        material.blending = .transparent(opacity: .init(floatLiteral: baseOpacity))
         if var modelComponent = model.model {
             modelComponent.materials = [material]
             model.model = modelComponent

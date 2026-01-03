@@ -40,6 +40,7 @@ struct HandState {
 
     // Mega fireball state
     var isMegaFireball: Bool = false
+    var suppressSpawnUntilRelease: Bool = false
 }
 
 // MARK: - Projectile State

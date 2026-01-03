@@ -1149,15 +1149,15 @@ final class HandTrackingManager {
                 let newPosition = projectile.startPosition + projectile.direction * travelDistance
                 
                 // Check for collision with real-world surfaces using raycast
-                if let hitPoint = checkProjectileCollision(
+                if let hit = checkProjectileCollision(
                     projectilePosition: newPosition,
                     direction: projectile.direction,
                     previousPosition: projectile.previousPosition
                 ) {
                     // Explode at the exact hit point
-                    await triggerExplosion(at: hitPoint, projectileID: id)
+                    await triggerExplosion(at: hit.position, normal: hit.normal, projectileID: id)
                     projectilesToRemove.append(id)
-                    print("Fireball hit real-world surface at \(hitPoint)")
+                    print("Fireball hit real-world surface at \(hit.position)")
                     continue
                 }
                 
@@ -1432,7 +1432,7 @@ final class HandTrackingManager {
 
     /// Check collision using ray-triangle intersection against PERSISTENT mesh cache
     /// This allows collision with surfaces even when they're no longer in LiDAR range
-    private func checkProjectileCollision(projectilePosition: SIMD3<Float>, direction: SIMD3<Float>, previousPosition: SIMD3<Float>) -> SIMD3<Float>? {
+    private func checkProjectileCollision(projectilePosition: SIMD3<Float>, direction: SIMD3<Float>, previousPosition: SIMD3<Float>) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {
         // Calculate ray from previous position to current position
         let rayOrigin = previousPosition
         let rayDirection = projectilePosition - previousPosition
@@ -1442,22 +1442,22 @@ final class HandTrackingManager {
         guard rayLength > 0.001 else { return nil }
         
         let normalizedDirection = rayDirection / rayLength
-        var closestHit: SIMD3<Float>? = nil
+        var closestHit: (position: SIMD3<Float>, normal: SIMD3<Float>)? = nil
         var closestDistance: Float = rayLength
         
         // Check against PERSISTENT mesh cache (not just live anchors)
         // This allows collision with walls that were scanned earlier but are now out of range
         for (_, cachedMesh) in persistentMeshCache {
-            if let hitPoint = raycastAgainstCachedMesh(
+            if let hit = raycastAgainstCachedMesh(
                 rayOrigin: rayOrigin,
                 rayDirection: normalizedDirection,
                 maxDistance: closestDistance,
                 cached: cachedMesh
             ) {
-                let hitDistance = simd_distance(rayOrigin, hitPoint)
+                let hitDistance = simd_distance(rayOrigin, hit.position)
                 if hitDistance < closestDistance {
                     closestDistance = hitDistance
-                    closestHit = hitPoint
+                    closestHit = hit
                 }
             }
         }
@@ -1471,10 +1471,10 @@ final class HandTrackingManager {
         rayDirection: SIMD3<Float>,
         maxDistance: Float,
         cached: CachedMeshGeometry
-    ) -> SIMD3<Float>? {
+    ) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {
         let transform = cached.transform
         
-        var closestHit: SIMD3<Float>? = nil
+        var closestHit: (position: SIMD3<Float>, normal: SIMD3<Float>)? = nil
         var closestT: Float = maxDistance
         
         // Iterate through all triangles in the cached mesh
@@ -1501,7 +1501,17 @@ final class HandTrackingManager {
             ) {
                 if t > 0.001 && t < closestT {
                     closestT = t
-                    closestHit = rayOrigin + rayDirection * t
+                    let hitPos = rayOrigin + rayDirection * t
+                    
+                    // Calculate normal and flip to face the incoming ray
+                    let edge1 = v1 - v0
+                    let edge2 = v2 - v0
+                    var normal = normalize(simd_cross(edge1, edge2))
+                    if simd_dot(normal, rayDirection) > 0 {
+                        normal = -normal
+                    }
+                    
+                    closestHit = (hitPos, normal)
                 }
             }
         }
@@ -1654,7 +1664,7 @@ final class HandTrackingManager {
 
     // MARK: - Explosion System
 
-    private func triggerExplosion(at position: SIMD3<Float>, projectileID: UUID) async {
+    private func triggerExplosion(at position: SIMD3<Float>, normal: SIMD3<Float>? = nil, projectileID: UUID) async {
         if let projectile = activeProjectiles[projectileID] {
             projectile.entity.removeFromParent()
             activeProjectiles.removeValue(forKey: projectileID)
@@ -1677,16 +1687,50 @@ final class HandTrackingManager {
         
         rootEntity.addChild(explosion)
 
+        // Add scorch mark if we have a normal - spawns immediately with explosion
+        if let normal = normal {
+            Task {
+                let scorch = createScorchMark()
+                // Position slightly off the wall to avoid z-fighting
+                let scorchPosition = position + normal * 0.01
+                scorch.position = scorchPosition
+
+                // Orient so the scorch's +Z faces the wall normal
+                // look(at:from:) aligns -Z to the target direction
+                scorch.look(at: scorchPosition - normal, from: scorchPosition, relativeTo: nil)
+
+                // Natural fade-in: start slightly smaller and grow
+                // This makes it feel like the soot is being deposited/settling
+                scorch.scale = [0.7, 0.7, 0.7]
+
+                rootEntity.addChild(scorch)
+
+                // Subtle grow animation for natural appearance
+                var transform = scorch.transform
+                transform.scale = [1.0, 1.0, 1.0]
+                scorch.move(to: transform, relativeTo: scorch.parent, duration: 0.5, timingFunction: .easeOut)
+
+                // Remove scorch mark after a delay
+                Task {
+                    try? await Task.sleep(for: .seconds(16))
+                    await fadeOutScorch(scorch, duration: 1.0)
+                    scorch.removeFromParent()
+                }
+            }
+        }
+
         print("Explosion at \(position)")
 
         Task {
             if let lightEntity = explosion.children.first(where: {
                 $0.components[PointLightComponent.self] != nil
             }) {
-                for i in 0..<10 {
+                // Animate light intensity down
+                let steps = 20
+                for i in 0..<steps {
                     try? await Task.sleep(for: .milliseconds(50))
                     if var light = lightEntity.components[PointLightComponent.self] {
-                        light.intensity = 10000 * Float(10 - i) / 10
+                        light.intensity = 5000 * Float(steps - i) / Float(steps)
                         lightEntity.components.set(light)
                     }
                 }
@@ -1701,6 +1745,20 @@ final class HandTrackingManager {
             
             try? await Task.sleep(for: .milliseconds(300))
             explosion.removeFromParent()
+        }
+    }
+
+    @MainActor
+    private func fadeOutScorch(_ entity: Entity, duration: Double) async {
+        let steps = 20
+        let stepDuration = duration / Double(steps)
+
+        entity.components.set(OpacityComponent(opacity: 1.0))
+        for step in 0..<steps {
+            guard entity.parent != nil else { return }
+            let t = Float(1.0 - Double(step + 1) / Double(steps))
+            entity.components.set(OpacityComponent(opacity: t))
+            try? await Task.sleep(for: .seconds(stepDuration))
         }
     }
 

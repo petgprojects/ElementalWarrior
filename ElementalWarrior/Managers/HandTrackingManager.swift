@@ -28,6 +28,11 @@ final class HandTrackingManager {
     private var fireballTemplate: Entity?
     private var explosionTemplate: Entity?
     private var flamethrowerTemplate: Entity?
+    private var combinedFlamethrowerTemplate: Entity?
+
+    // Combined flamethrower state (exists only while both hands are close together)
+    private var combinedFlamethrower: Entity?
+    private var combinedFlamethrowerAudio: AudioPlaybackController?
 
     // Audio Resources
     private var crackleSound: AudioFileResource?
@@ -128,6 +133,11 @@ final class HandTrackingManager {
             createFlamethrowerStream()
         }
         print("Flamethrower template created programmatically")
+
+        combinedFlamethrowerTemplate = await MainActor.run {
+            createCombinedFlamethrowerStream()
+        }
+        print("Combined flamethrower template created programmatically")
     }
 
     private func loadAudioResources() async {
@@ -266,6 +276,9 @@ final class HandTrackingManager {
 
             // Check for fireball combining after processing hand update
             await checkFireballCombine()
+
+            // Check for flamethrower combining after processing hand update
+            await checkFlamethrowerCombine()
         }
     }
 
@@ -448,6 +461,253 @@ final class HandTrackingManager {
         entity.addChild(lightEntity)
 
         return entity
+    }
+
+    // MARK: - Flamethrower Combining
+
+    private func checkFlamethrowerCombine() async {
+        // Both hands must be using flamethrowers
+        guard leftHandState.isUsingFlamethrower,
+              rightHandState.isUsingFlamethrower,
+              let leftFlamethrower = leftHandState.flamethrower,
+              let rightFlamethrower = rightHandState.flamethrower else {
+            // If we were combined but one hand stopped, separate
+            if combinedFlamethrower != nil {
+                await separateFlamethrowers()
+            }
+            return
+        }
+
+        // Get the distance between hands (using flamethrower positions)
+        let distance = simd_distance(leftFlamethrower.position, rightFlamethrower.position)
+
+        if distance < GestureConstants.flamethrowerCombineDistance {
+            // Hands are close enough to combine
+            if combinedFlamethrower == nil && !leftHandState.isPartOfCombinedFlamethrower {
+                await combineFlamethrowers()
+            } else if combinedFlamethrower != nil {
+                // Update combined flamethrower position/orientation
+                await updateCombinedFlamethrower()
+            }
+        } else {
+            // Hands are too far apart - separate if combined
+            if combinedFlamethrower != nil {
+                await separateFlamethrowers()
+            }
+        }
+    }
+
+    private func combineFlamethrowers() async {
+        guard let leftFlamethrower = leftHandState.flamethrower,
+              let rightFlamethrower = rightHandState.flamethrower else {
+            return
+        }
+
+        print("Combining flamethrowers!")
+
+        // Calculate midpoint and average direction BEFORE hiding individual flamethrowers
+        let midpoint = (leftFlamethrower.position + rightFlamethrower.position) / 2
+
+        // Extract direction from transform - columns.2 is the local Z axis in world space
+        // The flamethrower stream is oriented along +Z, so this gives us the flame direction
+        let leftDir = simd_normalize(SIMD3<Float>(
+            leftFlamethrower.transform.matrix.columns.2.x,
+            leftFlamethrower.transform.matrix.columns.2.y,
+            leftFlamethrower.transform.matrix.columns.2.z
+        ))
+        let rightDir = simd_normalize(SIMD3<Float>(
+            rightFlamethrower.transform.matrix.columns.2.x,
+            rightFlamethrower.transform.matrix.columns.2.y,
+            rightFlamethrower.transform.matrix.columns.2.z
+        ))
+        let avgDirection = simd_normalize((leftDir + rightDir) / 2)
+
+        // Create a merge flash effect at the midpoint (like fireball combining)
+        let flashEntity = createMergeFlash()
+        flashEntity.position = midpoint
+        rootEntity.addChild(flashEntity)
+
+        // Remove flash after brief duration
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            flashEntity.removeFromParent()
+        }
+
+        // Fade out individual audio smoothly
+        leftHandState.flamethrowerAudio?.fade(to: -80, duration: 0.2)
+        rightHandState.flamethrowerAudio?.fade(to: -80, duration: 0.2)
+
+        // Create combined flamethrower starting small for scale-up animation
+        let combined = await createCombinedFlamethrower()
+
+        var transform = combined.transform
+        transform.translation = midpoint
+        transform.rotation = simd_quatf(from: SIMD3<Float>(0, 0, 1), to: avgDirection)
+        transform.scale = [0.3, 0.3, 0.3]  // Start small
+        combined.transform = transform
+
+        rootEntity.addChild(combined)
+        combinedFlamethrower = combined
+
+        // Animate combined flamethrower scaling up with overshoot
+        var targetTransform = transform
+        targetTransform.scale = [1.15, 1.15, 1.15]  // Slight overshoot
+        combined.move(to: targetTransform, relativeTo: combined.parent, duration: 0.18, timingFunction: .easeOut)
+
+        // Start combined audio with boost
+        if let flameSound = flamethrowerSound {
+            let controller = combined.playAudio(flameSound)
+            controller.gain = -80
+            controller.fade(to: GestureConstants.combinedFlamethrowerAudioBoost, duration: 0.25)
+            combinedFlamethrowerAudio = controller
+        }
+
+        // Wait for overshoot animation
+        try? await Task.sleep(for: .milliseconds(180))
+
+        // Settle to final scale
+        var finalTransform = combined.transform
+        finalTransform.scale = [1.0, 1.0, 1.0]
+        combined.move(to: finalTransform, relativeTo: combined.parent, duration: 0.12, timingFunction: .easeInOut)
+
+        // Now hide individual flamethrowers (after combined is visible)
+        leftFlamethrower.isEnabled = false
+        rightFlamethrower.isEnabled = false
+
+        // Mark hands as part of combined flamethrower
+        leftHandState.isPartOfCombinedFlamethrower = true
+        rightHandState.isPartOfCombinedFlamethrower = true
+
+        print("Flamethrowers combined!")
+    }
+
+    private func updateCombinedFlamethrower() async {
+        guard let combined = combinedFlamethrower,
+              let leftFlamethrower = leftHandState.flamethrower,
+              let rightFlamethrower = rightHandState.flamethrower else {
+            return
+        }
+
+        // Update position to midpoint
+        let midpoint = (leftFlamethrower.position + rightFlamethrower.position) / 2
+
+        // Calculate average direction - columns.2 is the local Z axis (flame direction)
+        let leftDir = simd_normalize(SIMD3<Float>(
+            leftFlamethrower.transform.matrix.columns.2.x,
+            leftFlamethrower.transform.matrix.columns.2.y,
+            leftFlamethrower.transform.matrix.columns.2.z
+        ))
+        let rightDir = simd_normalize(SIMD3<Float>(
+            rightFlamethrower.transform.matrix.columns.2.x,
+            rightFlamethrower.transform.matrix.columns.2.y,
+            rightFlamethrower.transform.matrix.columns.2.z
+        ))
+        let avgDirection = simd_normalize((leftDir + rightDir) / 2)
+
+        // Get hit distance for length scaling (use average of both hands' last hit distances)
+        let avgHitDistance = (leftHandState.lastFlamethrowerHitDistance + rightHandState.lastFlamethrowerHitDistance) / 2
+        let lengthFactor = max(0.25, avgHitDistance / GestureConstants.flamethrowerRange)
+
+        var transform = combined.transform
+        transform.translation = midpoint
+        transform.rotation = simd_quatf(from: SIMD3<Float>(0, 0, 1), to: avgDirection)
+        transform.scale = [1, 1, lengthFactor]
+        combined.transform = transform
+
+        // Handle scorch marks from combined beam
+        let now = CACurrentMediaTime()
+        let avgScorchTime = max(leftHandState.lastFlamethrowerScorchTime, rightHandState.lastFlamethrowerScorchTime)
+        if now - avgScorchTime > GestureConstants.flamethrowerScorchCooldown {
+            // Raycast from combined position
+            if let hit = CollisionSystem.raycastBeam(
+                origin: midpoint + avgDirection * 0.02,
+                direction: avgDirection,
+                maxDistance: GestureConstants.flamethrowerRange,
+                meshCache: persistentMeshCache
+            ) {
+                leftHandState.lastFlamethrowerScorchTime = now
+                rightHandState.lastFlamethrowerScorchTime = now
+                // Larger scorch for combined flamethrower
+                await spawnFlamethrowerScorch(at: hit.position, normal: hit.normal, scale: GestureConstants.flamethrowerScorchScale * 1.5)
+            }
+        }
+    }
+
+    private func separateFlamethrowers() async {
+        print("Separating flamethrowers!")
+
+        guard let combined = combinedFlamethrower else {
+            // Just clean up state if no combined flamethrower exists
+            leftHandState.isPartOfCombinedFlamethrower = false
+            rightHandState.isPartOfCombinedFlamethrower = false
+            return
+        }
+
+        // Create a split flash effect at the combined position
+        let flashEntity = createMergeFlash()
+        flashEntity.position = combined.position
+        rootEntity.addChild(flashEntity)
+
+        // Remove flash after brief duration
+        Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            flashEntity.removeFromParent()
+        }
+
+        // Fade out combined audio
+        combinedFlamethrowerAudio?.fade(to: -80, duration: 0.2)
+
+        // Animate combined flamethrower shrinking
+        var shrinkTransform = combined.transform
+        shrinkTransform.scale = [0.2, 0.2, 0.2]
+        combined.move(to: shrinkTransform, relativeTo: combined.parent, duration: 0.15, timingFunction: .easeIn)
+
+        // Re-enable individual flamethrowers with scale-up animation
+        if let leftFlamethrower = leftHandState.flamethrower {
+            leftFlamethrower.isEnabled = true
+            // Start small and scale up
+            var leftTransform = leftFlamethrower.transform
+            let originalScale = leftTransform.scale
+            leftTransform.scale = [0.3, 0.3, 0.3]
+            leftFlamethrower.transform = leftTransform
+            leftTransform.scale = originalScale
+            leftFlamethrower.move(to: leftTransform, relativeTo: leftFlamethrower.parent, duration: 0.2, timingFunction: .easeOut)
+            leftHandState.flamethrowerAudio?.fade(to: 0, duration: 0.25)
+        }
+        if let rightFlamethrower = rightHandState.flamethrower {
+            rightFlamethrower.isEnabled = true
+            // Start small and scale up
+            var rightTransform = rightFlamethrower.transform
+            let originalScale = rightTransform.scale
+            rightTransform.scale = [0.3, 0.3, 0.3]
+            rightFlamethrower.transform = rightTransform
+            rightTransform.scale = originalScale
+            rightFlamethrower.move(to: rightTransform, relativeTo: rightFlamethrower.parent, duration: 0.2, timingFunction: .easeOut)
+            rightHandState.flamethrowerAudio?.fade(to: 0, duration: 0.25)
+        }
+
+        // Wait for shrink animation then remove combined
+        try? await Task.sleep(for: .milliseconds(160))
+
+        combined.removeFromParent()
+        combinedFlamethrower = nil
+
+        // Stop combined audio
+        combinedFlamethrowerAudio?.stop()
+        combinedFlamethrowerAudio = nil
+
+        // Mark hands as no longer combined
+        leftHandState.isPartOfCombinedFlamethrower = false
+        rightHandState.isPartOfCombinedFlamethrower = false
+
+        print("Flamethrowers separated!")
+    }
+
+    private func createCombinedFlamethrower() async -> Entity {
+        if let template = combinedFlamethrowerTemplate {
+            return template.clone(recursive: true)
+        }
+        return Entity()
     }
 
     // MARK: - Left Hand Update
@@ -799,6 +1059,7 @@ final class HandTrackingManager {
         state.flamethrowerAudio = nil
         state.isUsingFlamethrower = false
         state.lastFlamethrowerScorchTime = 0
+        state.isPartOfCombinedFlamethrower = false
 
         if hand == .left {
             leftHandState = state
@@ -808,8 +1069,9 @@ final class HandTrackingManager {
     }
 
     @MainActor
-    private func spawnFlamethrowerScorch(at position: SIMD3<Float>, normal: SIMD3<Float>) async {
-        let scorchScale = GestureConstants.flamethrowerScorchScale * Float.random(in: 0.9...1.05)
+    private func spawnFlamethrowerScorch(at position: SIMD3<Float>, normal: SIMD3<Float>, scale: Float? = nil) async {
+        let baseScale = scale ?? GestureConstants.flamethrowerScorchScale
+        let scorchScale = baseScale * Float.random(in: 0.9...1.05)
         let scorch = createFlamethrowerScorchMark(scale: scorchScale)
         let scorchPosition = position + normal * 0.008
         scorch.position = scorchPosition

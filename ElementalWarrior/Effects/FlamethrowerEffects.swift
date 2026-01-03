@@ -20,22 +20,26 @@ import SwiftUI
 
 /// Creates a layered flamethrower stream oriented along +Z in local space.
 /// The caller should position/orient the returned entity at the palm.
+/// - Parameters:
+///   - scale: Overall scale factor for the effect
+///   - muzzleScale: Scale factor for the palm ball (0.5 for single-hand, 1.0+ for combined)
+///   - jetIntensityMultiplier: Multiplier for jet birth rates (1.0 for single-hand, higher for combined)
 @MainActor
-func createFlamethrowerStream(scale: Float = 1.0) -> Entity {
+func createFlamethrowerStream(scale: Float = 1.0, muzzleScale: Float = 0.5, jetIntensityMultiplier: Float = 1.0) -> Entity {
     let root = Entity()
     root.name = "FlamethrowerStream"
 
-    root.addChild(createCoreJet(scale: scale))
-    root.addChild(createBodyJet(scale: scale))
-    root.addChild(createSparkSpray(scale: scale))
-    root.addChild(createHeatSmoke(scale: scale))
-    root.addChild(createMuzzleFlash(scale: scale))
+    root.addChild(createCoreJet(scale: scale, intensityMultiplier: jetIntensityMultiplier))
+    root.addChild(createBodyJet(scale: scale, intensityMultiplier: jetIntensityMultiplier))
+    root.addChild(createSparkSpray(scale: scale, intensityMultiplier: jetIntensityMultiplier))
+    root.addChild(createHeatSmoke(scale: scale, intensityMultiplier: jetIntensityMultiplier))
+    root.addChild(createMuzzleFlash(scale: scale, muzzleScale: muzzleScale))
 
     // Add a warm light near the palm for extra realism
     let lightEntity = Entity()
     let pointLight = PointLightComponent(
         color: .orange,
-        intensity: 1400 * scale,
+        intensity: 1400 * scale * jetIntensityMultiplier,
         attenuationRadius: 3.5 * scale
     )
     lightEntity.components.set(pointLight)
@@ -43,6 +47,14 @@ func createFlamethrowerStream(scale: Float = 1.0) -> Entity {
     root.addChild(lightEntity)
 
     return root
+}
+
+/// Creates a combined flamethrower stream with enhanced visuals
+/// Used when both hands come together while using flamethrowers
+@MainActor
+func createCombinedFlamethrowerStream(scale: Float = 1.0) -> Entity {
+    // Combined flamethrower has full-size muzzle (1.0) and 1.5x jet intensity
+    return createFlamethrowerStream(scale: scale, muzzleScale: 1.0, jetIntensityMultiplier: 1.5)
 }
 
 /// Quick dissipating smoke puff for shut down
@@ -94,10 +106,10 @@ private func baseEmitter(emitterShapeSize: SIMD3<Float>, emissionDirection: SIMD
     return emitter
 }
 
-private func createCoreJet(scale: Float) -> Entity {
+private func createCoreJet(scale: Float, intensityMultiplier: Float = 1.0) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.035 * scale, 0.035 * scale, 0.035 * scale], emissionDirection: [0, 0, 1])
 
-    emitter.mainEmitter.birthRate = 1800 * scale
+    emitter.mainEmitter.birthRate = 1800 * scale * intensityMultiplier
     emitter.mainEmitter.lifeSpan = 0.35
     emitter.mainEmitter.lifeSpanVariation = 0.08
     emitter.mainEmitter.size = 0.055 * scale
@@ -123,10 +135,10 @@ private func createCoreJet(scale: Float) -> Entity {
     return entity
 }
 
-private func createBodyJet(scale: Float) -> Entity {
+private func createBodyJet(scale: Float, intensityMultiplier: Float = 1.0) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.05 * scale, 0.05 * scale, 0.05 * scale], emissionDirection: [0, 0, 1])
 
-    emitter.mainEmitter.birthRate = 1350 * scale
+    emitter.mainEmitter.birthRate = 1350 * scale * intensityMultiplier
     emitter.mainEmitter.lifeSpan = 0.52
     emitter.mainEmitter.lifeSpanVariation = 0.12
     emitter.mainEmitter.size = 0.09 * scale
@@ -153,10 +165,10 @@ private func createBodyJet(scale: Float) -> Entity {
     return entity
 }
 
-private func createSparkSpray(scale: Float) -> Entity {
+private func createSparkSpray(scale: Float, intensityMultiplier: Float = 1.0) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.03 * scale, 0.03 * scale, 0.03 * scale], emissionDirection: [0, 0.1, 1])
 
-    emitter.mainEmitter.birthRate = 210 * scale
+    emitter.mainEmitter.birthRate = 210 * scale * intensityMultiplier
     emitter.mainEmitter.lifeSpan = 0.7
     emitter.mainEmitter.lifeSpanVariation = 0.15
     emitter.mainEmitter.size = 0.018 * scale
@@ -182,10 +194,10 @@ private func createSparkSpray(scale: Float) -> Entity {
     return entity
 }
 
-private func createHeatSmoke(scale: Float) -> Entity {
+private func createHeatSmoke(scale: Float, intensityMultiplier: Float = 1.0) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.055 * scale, 0.055 * scale, 0.055 * scale], emissionDirection: [0, 0, 1])
 
-    emitter.mainEmitter.birthRate = 420 * scale
+    emitter.mainEmitter.birthRate = 420 * scale * intensityMultiplier
     emitter.mainEmitter.lifeSpan = 1.05
     emitter.mainEmitter.lifeSpanVariation = 0.2
     emitter.mainEmitter.size = 0.11 * scale
@@ -213,19 +225,21 @@ private func createHeatSmoke(scale: Float) -> Entity {
     return entity
 }
 
-private func createMuzzleFlash(scale: Float) -> Entity {
-    var emitter = baseEmitter(emitterShapeSize: [0.035 * scale, 0.035 * scale, 0.035 * scale], emissionDirection: [0, 0, 1])
+private func createMuzzleFlash(scale: Float, muzzleScale: Float = 0.5) -> Entity {
+    // muzzleScale defaults to 0.5 (50%) for single-hand, 1.0 for combined flamethrower
+    let effectiveMuzzleScale = scale * muzzleScale
+    var emitter = baseEmitter(emitterShapeSize: [0.035 * effectiveMuzzleScale, 0.035 * effectiveMuzzleScale, 0.035 * effectiveMuzzleScale], emissionDirection: [0, 0, 1])
 
     emitter.timing = .repeating(warmUp: 0.0, emit: .init(duration: 10000))
-    emitter.mainEmitter.birthRate = 720 * scale
+    emitter.mainEmitter.birthRate = 720 * effectiveMuzzleScale
     emitter.mainEmitter.lifeSpan = 0.18
     emitter.mainEmitter.lifeSpanVariation = 0.05
-    emitter.mainEmitter.size = 0.12 * scale
-    emitter.mainEmitter.sizeVariation = 0.05 * scale
+    emitter.mainEmitter.size = 0.12 * effectiveMuzzleScale
+    emitter.mainEmitter.sizeVariation = 0.05 * effectiveMuzzleScale
     emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 0.05
 
-    emitter.speed = 0.6 * scale
-    emitter.speedVariation = 0.2 * scale
+    emitter.speed = 0.6 * effectiveMuzzleScale
+    emitter.speedVariation = 0.2 * effectiveMuzzleScale
     emitter.mainEmitter.spreadingAngle = 0.25
 
     emitter.mainEmitter.color = .evolving(

@@ -1503,10 +1503,13 @@ final class HandTrackingManager {
                     closestT = t
                     let hitPos = rayOrigin + rayDirection * t
                     
-                    // Calculate normal
+                    // Calculate normal and flip to face the incoming ray
                     let edge1 = v1 - v0
                     let edge2 = v2 - v0
-                    let normal = normalize(simd_cross(edge1, edge2))
+                    var normal = normalize(simd_cross(edge1, edge2))
+                    if simd_dot(normal, rayDirection) > 0 {
+                        normal = -normal
+                    }
                     
                     closestHit = (hitPos, normal)
                 }
@@ -1689,16 +1692,12 @@ final class HandTrackingManager {
             Task {
                 let scorch = createScorchMark()
                 // Position slightly off the wall to avoid z-fighting
-                scorch.position = position + normal * 0.01
+                let scorchPosition = position + normal * 0.01
+                scorch.position = scorchPosition
 
-                // Orient to face the normal
+                // Orient so the scorch's +Z faces the wall normal
                 // look(at:from:) aligns -Z to the target direction
-                scorch.look(at: position + normal, from: position, relativeTo: nil)
-
-                // The plane mesh is in XZ plane (normal +Y).
-                // We need to rotate it so its +Y aligns with the entity's -Z (which points along the wall normal)
-                // Rotating -90 degrees around X axis aligns +Y to -Z
-                scorch.orientation *= simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
+                scorch.look(at: scorchPosition - normal, from: scorchPosition, relativeTo: nil)
 
                 // Natural fade-in: start slightly smaller and grow
                 // This makes it feel like the soot is being deposited/settling

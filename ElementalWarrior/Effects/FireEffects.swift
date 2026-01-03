@@ -25,6 +25,7 @@ import CoreGraphics
 // Set to nil to force regeneration with new parameters
 // UPDATED: Now using enhanced radial gradient with burnt texture detail
 private var cachedScorchTexture: TextureResource? = nil
+private var cachedScorchDetailTexture: TextureResource? = nil
 
 // MARK: - Fireball Effect
 
@@ -340,6 +341,10 @@ func createScorchMark() -> Entity {
         cachedScorchTexture = generateRadialGradientTexture()
     }
 
+    if cachedScorchDetailTexture == nil {
+        cachedScorchDetailTexture = try? TextureResource.load(named: "scorch_mark")
+    }
+
     var material = UnlitMaterial()
     if let texture = cachedScorchTexture {
         material.color = .init(tint: .black, texture: .init(texture))
@@ -351,18 +356,36 @@ func createScorchMark() -> Entity {
     // DEBUG: Force opacity to see actual mesh shape
     // Uncomment to debug: material.color = .init(tint: .init(white: 0.1, alpha: 1.0))
 
-    let model = ModelEntity(mesh: mesh, materials: [material])
+    let baseModel = ModelEntity(mesh: mesh, materials: [material])
 
     // Random rotation for variety
-    let randomAngle = Float.random(in: 0...(2 * .pi))
-    model.orientation = simd_quatf(angle: randomAngle, axis: [0, 1, 0])
+    let twoPi: Float = .pi * 2
+    let randomAngle = Float.random(in: 0...twoPi)
+    baseModel.orientation = simd_quatf(angle: randomAngle, axis: [0, 0, 1])
+    entity.addChild(baseModel)
 
-    entity.addChild(model)
+    if let detailTexture = cachedScorchDetailTexture {
+        var detailMaterial = UnlitMaterial()
+        detailMaterial.color = .init(
+            tint: .init(red: 0.08, green: 0.05, blue: 0.03, alpha: 0.75),
+            texture: .init(detailTexture)
+        )
+        detailMaterial.blending = .transparent(opacity: 0.7)
+
+        let detailModel = ModelEntity(mesh: mesh, materials: [detailMaterial])
+        let detailScale = Float.random(in: 0.65...0.82)
+        detailModel.scale = [detailScale, detailScale, 1.0]
+        detailModel.orientation = simd_quatf(
+            angle: randomAngle + Float.random(in: -0.6...0.6),
+            axis: [0, 0, 1]
+        )
+        detailModel.position = [0, 0, 0.001]
+        entity.addChild(detailModel)
+    }
 
     // Lingering Smoke Effect
     let smoke = createLingeringSmoke()
-    smoke.position = [0, 0.05, 0]
-    smoke.orientation = simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
+    smoke.position = [0, 0, 0.02]
     entity.addChild(smoke)
 
     return entity
@@ -371,67 +394,116 @@ func createScorchMark() -> Entity {
 /// Generate a unique irregular soot mark mesh - NO rectangular bounds
 /// Creates a circular disc with organic edge variation
 private func generateIrregularSootMesh() -> MeshResource {
-    let pointCount = 64 // Smooth circle
-    let baseRadius: Float = Float.random(in: 0.15...0.22) // 30-44cm diameter, varies per mark
+    let pointCount = 96
+    let baseRadius: Float = Float.random(in: 0.13...0.22) // 26-44cm diameter, varies per mark
 
     var vertices: [SIMD3<Float>] = []
     var indices: [UInt32] = []
     var normals: [SIMD3<Float>] = []
     var uvs: [SIMD2<Float>] = []
 
-    // Pre-generate smooth random radius variations
+    let twoPi: Float = .pi * 2
+    let lobe1 = Float(Int.random(in: 2...4))
+    let lobe2 = Float(Int.random(in: 5...8))
+    let lobe3 = Float(Int.random(in: 9...13))
+    let phase1 = Float.random(in: 0...twoPi)
+    let phase2 = Float.random(in: 0...twoPi)
+    let phase3 = Float.random(in: 0...twoPi)
+
+    let spurCount = Int.random(in: 3...6)
+    var spurs: [(center: Float, width: Float, strength: Float)] = []
+    spurs.reserveCapacity(spurCount)
+    for _ in 0..<spurCount {
+        let center = Float.random(in: 0...twoPi)
+        let width = Float.random(in: 0.15...0.35)
+        let strength = Float.random(in: 0.12...0.25)
+        spurs.append((center: center, width: width, strength: strength))
+    }
+
+    func angularDistance(_ a: Float, _ b: Float) -> Float {
+        let diff = abs(a - b)
+        return min(diff, twoPi - diff)
+    }
+
+    @inline(__always)
+    func sinf(_ value: Float) -> Float {
+        Float(sin(Double(value)))
+    }
+
+    @inline(__always)
+    func cosf(_ value: Float) -> Float {
+        Float(cos(Double(value)))
+    }
+
+    // Pre-generate radius variations
     var radii: [Float] = []
     for i in 0..<pointCount {
-        // Base variation
-        var r = Float.random(in: 0.88...1.12)
-        // Add some waviness for organic splatter look
-        let angle = Float(i) / Float(pointCount) * 2.0 * .pi
-        let wave1 = sin(angle * Float.random(in: 3...5)) * 0.08
-        let wave2 = sin(angle * Float.random(in: 7...9) + 1.0) * 0.04
-        r += wave1 + wave2
+        let angle = Float(i) / Float(pointCount) * twoPi
+        var r: Float = 1.0
+        r += sinf(angle * lobe1 + phase1) * 0.12
+        r += sinf(angle * lobe2 + phase2) * 0.06
+        r += sinf(angle * lobe3 + phase3) * 0.03
+        r += Float.random(in: -0.05...0.05)
+
+        for spur in spurs {
+            let dist = angularDistance(angle, spur.center)
+            let t = max(Float(0.0), 1.0 - dist / spur.width)
+            r += spur.strength * t * t
+        }
+
+        r = max(0.55, r)
         radii.append(r)
     }
 
     // Smooth the radii for organic edges
-    var smoothRadii: [Float] = []
-    for i in 0..<pointCount {
-        let p1 = (i - 2 + pointCount) % pointCount
-        let p2 = (i - 1 + pointCount) % pointCount
-        let n1 = (i + 1) % pointCount
-        let n2 = (i + 2) % pointCount
-        let avg = (radii[p1] + radii[p2] * 2 + radii[i] * 3 + radii[n1] * 2 + radii[n2]) / 9.0
-        smoothRadii.append(avg)
+    var smoothRadii = radii
+    for _ in 0..<2 {
+        var next = smoothRadii
+        for i in 0..<pointCount {
+            let p = (i - 1 + pointCount) % pointCount
+            let n = (i + 1) % pointCount
+            next[i] = (smoothRadii[p] + smoothRadii[i] * 2 + smoothRadii[n]) / 4.0
+        }
+        smoothRadii = next
     }
 
     // Center vertex
     vertices.append([0, 0, 0])
-    normals.append([0, 1, 0])
+    normals.append([0, 0, 1])
     uvs.append([0.5, 0.5])
 
-    // Outer vertices - create circle in XZ plane
+    let maxScale = smoothRadii.max() ?? 1.0
+    let maxRadius = baseRadius * maxScale
+
+    // Outer vertices - create circle in XY plane
     for i in 0..<pointCount {
-        let angle = Float(i) / Float(pointCount) * 2.0 * .pi
+        let angle = Float(i) / Float(pointCount) * twoPi
         let r = baseRadius * smoothRadii[i]
 
-        // Circle in XZ plane (Y=0)
-        let x = cos(angle) * r
-        let z = sin(angle) * r
+        // Circle in XY plane (Z=0)
+        let x = cosf(angle) * r
+        let y = sinf(angle) * r
 
-        vertices.append([x, 0, z])
-        normals.append([0, 1, 0])
+        vertices.append([x, y, 0])
+        normals.append([0, 0, 1])
 
         // Map UVs based on position relative to max possible radius
-        let maxR = baseRadius * 1.3
-        let u = 0.5 + x / (maxR * 2.0)
-        let v = 0.5 + z / (maxR * 2.0)
-        uvs.append([u, v])
+        let u = 0.5 + x / (maxRadius * 2.0)
+        let v = 0.5 + y / (maxRadius * 2.0)
+        uvs.append([min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0)])
     }
 
     // Fan triangulation from center
     for i in 0..<pointCount {
+        let next = (i + 1) % pointCount
         indices.append(0) // center
         indices.append(UInt32(i + 1))
-        indices.append(UInt32((i + 1) % pointCount + 1))
+        indices.append(UInt32(next + 1))
+
+        // Reverse winding for backface visibility without relying on cull settings
+        indices.append(0)
+        indices.append(UInt32(next + 1))
+        indices.append(UInt32(i + 1))
     }
 
     var descriptor = MeshDescriptor(name: "SootMark")
@@ -444,8 +516,7 @@ private func generateIrregularSootMesh() -> MeshResource {
         return try MeshResource.generate(from: [descriptor])
     } catch {
         print("Mesh generation failed: \(error)")
-        // Fallback - but this shouldn't happen
-        return MeshResource.generatePlane(width: 0.3, depth: 0.3, cornerRadius: 0.15)
+        return MeshResource.generateSphere(radius: baseRadius * 0.1)
     }
 }
 
@@ -630,18 +701,18 @@ private func createLingeringSmoke() -> Entity {
     // Emit for 2 seconds then stop
     emitter.timing = .repeating(warmUp: 0, emit: .init(duration: 2.0))
     
-    emitter.emitterShape = .plane
-    emitter.emitterShapeSize = [0.2, 0.2, 0.0]
+    emitter.emitterShape = .sphere
+    emitter.emitterShapeSize = [0.06, 0.06, 0.06]
     
-    emitter.mainEmitter.birthRate = 15
+    emitter.mainEmitter.birthRate = 12
     emitter.mainEmitter.lifeSpan = 2.0
     emitter.mainEmitter.lifeSpanVariation = 1.0
     
-    // Emit along -Z (direction of wall normal)
-    emitter.emissionDirection = [0, 0, -1]
+    // Emit out along +Z (wall normal in local space)
+    emitter.emissionDirection = [0, 0, 1]
     emitter.birthDirection = .local
     
-    emitter.speed = 0.05
+    emitter.speed = 0.04
     emitter.speedVariation = 0.02
     
     emitter.mainEmitter.size = 0.03

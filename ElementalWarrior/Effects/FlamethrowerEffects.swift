@@ -45,6 +45,42 @@ func createFlamethrowerStream(scale: Float = 1.0) -> Entity {
     return root
 }
 
+/// Quick dissipating smoke puff for shut down
+@MainActor
+func createFlamethrowerShutdownSmoke(scale: Float = 1.0) -> Entity {
+    let puff = Entity()
+    puff.name = "FlamethrowerShutdownSmoke"
+
+    var emitter = ParticleEmitterComponent()
+    emitter.emitterShape = .sphere
+    emitter.emitterShapeSize = [0.04 * scale, 0.04 * scale, 0.04 * scale]
+    emitter.timing = .once(warmUp: 0, emit: .init(duration: 0.4))
+    emitter.birthLocation = .volume
+
+    emitter.mainEmitter.birthRate = 480 * scale
+    emitter.mainEmitter.lifeSpan = 1.0
+    emitter.mainEmitter.lifeSpanVariation = 0.2
+    emitter.mainEmitter.size = 0.06 * scale
+    emitter.mainEmitter.sizeVariation = 0.02 * scale
+    emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 1.4
+
+    emitter.speed = 0.4 * scale
+    emitter.speedVariation = 0.2 * scale
+    emitter.mainEmitter.acceleration = [0, 0.2 * scale, 0]
+    emitter.mainEmitter.spreadingAngle = 0.35
+
+    emitter.mainEmitter.color = .evolving(
+        start: .single(FlamethrowerColor(red: 0.3, green: 0.28, blue: 0.26, alpha: 0.35)),
+        end: .single(FlamethrowerColor(red: 0.18, green: 0.16, blue: 0.14, alpha: 0.0))
+    )
+    emitter.mainEmitter.blendMode = .alpha
+    emitter.mainEmitter.noiseStrength = 0.1 * scale
+    emitter.mainEmitter.noiseAnimationSpeed = 0.8
+
+    puff.components.set(emitter)
+    return puff
+}
+
 // MARK: - Layers
 
 private func baseEmitter(emitterShapeSize: SIMD3<Float>, emissionDirection: SIMD3<Float>) -> ParticleEmitterComponent {

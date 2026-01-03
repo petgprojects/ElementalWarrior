@@ -225,7 +225,177 @@ final class HandTrackingManager {
                 await handleTrackingRecovered(isLeft: false, position: palmPosition)
                 await updateRightHand(shouldShow: shouldShowFireball, position: palmPosition, fistPosition: fistPosition, isFist: isFist, anchor: anchor)
             }
+
+            // Check for fireball combining after processing hand update
+            await checkFireballCombine()
         }
+    }
+
+    // MARK: - Fireball Combining
+
+    private func checkFireballCombine() async {
+        // Both hands must have fireballs and not be animating
+        guard let leftFireball = leftHandState.fireball,
+              let rightFireball = rightHandState.fireball,
+              leftHandState.isShowingFireball,
+              rightHandState.isShowingFireball,
+              !leftHandState.isAnimating,
+              !rightHandState.isAnimating,
+              !leftHandState.isMegaFireball,  // Don't combine if already mega
+              !rightHandState.isMegaFireball else {
+            return
+        }
+
+        // Check if fireballs are close enough to combine
+        let distance = simd_distance(leftFireball.position, rightFireball.position)
+        guard distance < GestureConstants.fireballCombineDistance else {
+            return
+        }
+
+        // Determine dominant hand based on velocity (which one moved more)
+        let leftVelocity = GestureDetection.calculateVelocity(from: leftHandState.lastPositions)
+        let rightVelocity = GestureDetection.calculateVelocity(from: rightHandState.lastPositions)
+        let leftSpeed = simd_length(leftVelocity)
+        let rightSpeed = simd_length(rightVelocity)
+
+        // The hand that moved faster is the dominant hand (keeps the mega fireball)
+        let dominantIsLeft = leftSpeed >= rightSpeed
+
+        await combineFireballs(dominantIsLeft: dominantIsLeft)
+    }
+
+    private func combineFireballs(dominantIsLeft: Bool) async {
+        let dominantState = dominantIsLeft ? leftHandState : rightHandState
+        let sacrificeState = dominantIsLeft ? rightHandState : leftHandState
+
+        guard let dominantFireball = dominantState.fireball,
+              let sacrificeFireball = sacrificeState.fireball else {
+            return
+        }
+
+        print("Combining fireballs! Dominant hand: \(dominantIsLeft ? "LEFT" : "RIGHT")")
+
+        // Mark both as animating to prevent interference
+        if dominantIsLeft {
+            leftHandState.isAnimating = true
+            rightHandState.isAnimating = true
+        } else {
+            rightHandState.isAnimating = true
+            leftHandState.isAnimating = true
+        }
+
+        // Create a flash effect at the merge point
+        let mergePoint = (dominantFireball.position + sacrificeFireball.position) / 2
+        let flashEntity = createMergeFlash()
+        flashEntity.position = mergePoint
+        rootEntity.addChild(flashEntity)
+
+        // Remove flash after brief duration
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            flashEntity.removeFromParent()
+        }
+
+        // Fade out and remove the sacrifice fireball
+        if dominantIsLeft {
+            rightHandState.crackleController?.fade(to: -80, duration: 0.2)
+        } else {
+            leftHandState.crackleController?.fade(to: -80, duration: 0.2)
+        }
+
+        var sacrificeTransform = sacrificeFireball.transform
+        sacrificeTransform.scale = [0.01, 0.01, 0.01]
+        sacrificeFireball.move(to: sacrificeTransform, relativeTo: sacrificeFireball.parent, duration: 0.2, timingFunction: .easeIn)
+
+        // Scale up the dominant fireball to mega size
+        var dominantTransform = dominantFireball.transform
+        dominantTransform.scale = SIMD3<Float>(repeating: GestureConstants.megaFireballScale)
+        dominantFireball.move(to: dominantTransform, relativeTo: dominantFireball.parent, duration: 0.3, timingFunction: .easeOut)
+
+        // Boost crackle audio for mega fireball (+3dB while holding)
+        if dominantIsLeft {
+            leftHandState.crackleController?.fade(to: 3, duration: 0.3)
+        } else {
+            rightHandState.crackleController?.fade(to: 3, duration: 0.3)
+        }
+
+        // Wait for animations to complete
+        try? await Task.sleep(for: .milliseconds(300))
+
+        // Remove sacrifice fireball and clean up its state
+        sacrificeFireball.removeFromParent()
+        if dominantIsLeft {
+            rightHandState.crackleController?.stop()
+            rightHandState.crackleController = nil
+            rightHandState.fireball = nil
+            rightHandState.isShowingFireball = false
+            rightHandState.isPendingDespawn = false
+            rightHandState.isAnimating = false
+            rightHandState.despawnTask?.cancel()
+            rightHandState.despawnTask = nil
+        } else {
+            leftHandState.crackleController?.stop()
+            leftHandState.crackleController = nil
+            leftHandState.fireball = nil
+            leftHandState.isShowingFireball = false
+            leftHandState.isPendingDespawn = false
+            leftHandState.isAnimating = false
+            leftHandState.despawnTask?.cancel()
+            leftHandState.despawnTask = nil
+        }
+
+        // Mark the dominant hand as having a mega fireball
+        if dominantIsLeft {
+            leftHandState.isMegaFireball = true
+            leftHandState.isAnimating = false
+        } else {
+            rightHandState.isMegaFireball = true
+            rightHandState.isAnimating = false
+        }
+
+        print("Mega fireball created on \(dominantIsLeft ? "LEFT" : "RIGHT") hand!")
+    }
+
+    private func createMergeFlash() -> Entity {
+        let entity = Entity()
+        entity.name = "MergeFlash"
+
+        var emitter = ParticleEmitterComponent()
+        emitter.timing = .once(warmUp: 0, emit: .init(duration: 0.1))
+        emitter.emitterShape = .sphere
+        emitter.emitterShapeSize = [0.1, 0.1, 0.1]
+        emitter.birthLocation = .volume
+
+        emitter.mainEmitter.birthRate = 3000
+        emitter.mainEmitter.lifeSpan = 0.2
+        emitter.mainEmitter.lifeSpanVariation = 0.05
+
+        emitter.speed = 0.8
+        emitter.speedVariation = 0.3
+
+        emitter.mainEmitter.size = 0.04
+        emitter.mainEmitter.sizeVariation = 0.02
+        emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 0.1
+
+        emitter.mainEmitter.color = .evolving(
+            start: .single(.init(red: 1.0, green: 0.9, blue: 0.6, alpha: 1.0)),
+            end: .single(.init(red: 1.0, green: 0.5, blue: 0.0, alpha: 0.0))
+        )
+        emitter.mainEmitter.blendMode = .additive
+
+        entity.components.set(emitter)
+
+        // Add bright light flash
+        let lightEntity = Entity()
+        let pointLight = PointLightComponent(
+            color: .orange,
+            intensity: 8000,
+            attenuationRadius: 3.0
+        )
+        lightEntity.components.set(pointLight)
+        entity.addChild(lightEntity)
+
+        return entity
     }
 
     // MARK: - Left Hand Update
@@ -448,6 +618,7 @@ final class HandTrackingManager {
         leftHandState.isShowingFireball = false
         leftHandState.isPendingDespawn = false
         leftHandState.isAnimating = false
+        leftHandState.isMegaFireball = false
 
         leftHandState.crackleController?.stop()
         leftHandState.crackleController = nil
@@ -493,6 +664,7 @@ final class HandTrackingManager {
         rightHandState.isShowingFireball = false
         rightHandState.isPendingDespawn = false
         rightHandState.isAnimating = false
+        rightHandState.isMegaFireball = false
 
         rightHandState.crackleController?.stop()
         rightHandState.crackleController = nil
@@ -641,7 +813,10 @@ final class HandTrackingManager {
     }
 
     private func launchWithDirection(fireball: Entity, direction: SIMD3<Float>, hand: HandAnchor.Chirality) async {
+        // Capture mega state before clearing hand state
+        let isMega: Bool
         if hand == .left {
+            isMega = leftHandState.isMegaFireball
             leftHandState.crackleController?.fade(to: -80, duration: 0.1)
             leftHandState.crackleController = nil
 
@@ -651,7 +826,9 @@ final class HandTrackingManager {
             leftHandState.despawnTask = nil
             leftHandState.isPendingDespawn = false
             leftHandState.lastPositions = []
+            leftHandState.isMegaFireball = false
         } else {
+            isMega = rightHandState.isMegaFireball
             rightHandState.crackleController?.fade(to: -80, duration: 0.1)
             rightHandState.crackleController = nil
 
@@ -661,10 +838,15 @@ final class HandTrackingManager {
             rightHandState.despawnTask = nil
             rightHandState.isPendingDespawn = false
             rightHandState.lastPositions = []
+            rightHandState.isMegaFireball = false
         }
 
         if let woosh = wooshSound {
-            fireball.playAudio(woosh)
+            let controller = fireball.playAudio(woosh)
+            // Boost woosh volume for mega fireballs
+            if isMega {
+                controller.gain = GestureConstants.megaAudioGainBoost
+            }
         }
 
         let projectileID = UUID()
@@ -680,10 +862,11 @@ final class HandTrackingManager {
             startTime: CACurrentMediaTime(),
             speed: GestureConstants.projectileSpeed,
             trailEntity: trail,
-            previousPosition: startPos
+            previousPosition: startPos,
+            isMegaFireball: isMega
         )
 
-        print("Launched fireball from \(hand) in direction \(direction)")
+        print("Launched \(isMega ? "MEGA " : "")fireball from \(hand) in direction \(direction)")
     }
 
     // MARK: - Projectile Update Loop
@@ -701,7 +884,7 @@ final class HandTrackingManager {
                 let travelDistance = elapsed * projectile.speed
 
                 if travelDistance > GestureConstants.maxProjectileRange {
-                    await triggerExplosion(at: projectile.entity.position, projectileID: id)
+                    await triggerExplosion(at: projectile.entity.position, projectileID: id, isMega: projectile.isMegaFireball)
                     projectilesToRemove.append(id)
                     continue
                 }
@@ -714,9 +897,9 @@ final class HandTrackingManager {
                     previousPosition: projectile.previousPosition,
                     meshCache: persistentMeshCache
                 ) {
-                    await triggerExplosion(at: hit.position, normal: hit.normal, projectileID: id)
+                    await triggerExplosion(at: hit.position, normal: hit.normal, projectileID: id, isMega: projectile.isMegaFireball)
                     projectilesToRemove.append(id)
-                    print("Fireball hit real-world surface at \(hit.position)")
+                    print("\(projectile.isMegaFireball ? "MEGA " : "")Fireball hit real-world surface at \(hit.position)")
                     continue
                 }
 
@@ -954,42 +1137,48 @@ final class HandTrackingManager {
 
     // MARK: - Explosion System
 
-    private func triggerExplosion(at position: SIMD3<Float>, normal: SIMD3<Float>? = nil, projectileID: UUID) async {
+    private func triggerExplosion(at position: SIMD3<Float>, normal: SIMD3<Float>? = nil, projectileID: UUID, isMega: Bool = false) async {
         if let projectile = activeProjectiles[projectileID] {
             projectile.entity.removeFromParent()
             activeProjectiles.removeValue(forKey: projectileID)
         }
 
-        let explosion: Entity
-        if let template = explosionTemplate {
-            explosion = template.clone(recursive: true)
-        } else {
-            explosion = createExplosionEffect()
-        }
+        // Use scaled explosion for mega fireballs
+        let scale = isMega ? GestureConstants.megaExplosionScale : 1.0
+        let explosion = createExplosionEffect(scale: scale)
 
         explosion.position = position
 
         var audioController: AudioPlaybackController?
         if let explosionSound = explosionSound {
             audioController = explosion.playAudio(explosionSound)
+            // Boost audio for mega explosions
+            if isMega {
+                audioController?.gain = GestureConstants.megaAudioGainBoost
+            }
         }
 
         rootEntity.addChild(explosion)
 
         if let normal = normal {
             Task {
-                let scorch = createScorchMark()
+                // Use scaled scorch mark for mega fireballs
+                let scorchScale = isMega ? GestureConstants.megaScorchScale : 1.0
+                let scorch = createScorchMark(scale: scorchScale)
                 let scorchPosition = position + normal * 0.01
                 scorch.position = scorchPosition
 
                 scorch.look(at: scorchPosition - normal, from: scorchPosition, relativeTo: nil)
 
-                scorch.scale = [0.7, 0.7, 0.7]
+                // Animate from 70% to full size
+                let baseScale = scorchScale * 0.7
+                let fullScale = scorchScale
+                scorch.scale = [baseScale, baseScale, baseScale]
 
                 rootEntity.addChild(scorch)
 
                 var transform = scorch.transform
-                transform.scale = [1.0, 1.0, 1.0]
+                transform.scale = [fullScale, fullScale, fullScale]
                 scorch.move(to: transform, relativeTo: scorch.parent, duration: 0.5, timingFunction: .easeOut)
 
                 Task {
@@ -1000,8 +1189,10 @@ final class HandTrackingManager {
             }
         }
 
-        print("Explosion at \(position)")
+        print("Explosion at \(position)\(isMega ? " (MEGA)" : "")")
 
+        // Light intensity scales with mega explosions
+        let baseIntensity: Float = isMega ? 5000 * scale : 5000
         Task {
             if let lightEntity = explosion.children.first(where: {
                 $0.components[PointLightComponent.self] != nil
@@ -1010,7 +1201,7 @@ final class HandTrackingManager {
                 for i in 0..<steps {
                     try? await Task.sleep(for: .milliseconds(50))
                     if var light = lightEntity.components[PointLightComponent.self] {
-                        light.intensity = 5000 * Float(steps - i) / Float(steps)
+                        light.intensity = baseIntensity * Float(steps - i) / Float(steps)
                         lightEntity.components.set(light)
                     }
                 }

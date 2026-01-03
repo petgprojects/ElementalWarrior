@@ -27,6 +27,7 @@ final class HandTrackingManager {
     // Preloaded templates
     private var fireballTemplate: Entity?
     private var explosionTemplate: Entity?
+    private var flamethrowerTemplate: Entity?
 
     // Audio Resources
     private var crackleSound: AudioFileResource?
@@ -72,6 +73,7 @@ final class HandTrackingManager {
     func startHandTracking() async {
         await loadFireballTemplate()
         await loadExplosionTemplate()
+        await loadFlamethrowerTemplate()
         await loadAudioResources()
 
         do {
@@ -120,6 +122,13 @@ final class HandTrackingManager {
         print("Explosion template created programmatically")
     }
 
+    private func loadFlamethrowerTemplate() async {
+        flamethrowerTemplate = await MainActor.run {
+            createFlamethrowerStream()
+        }
+        print("Flamethrower template created programmatically")
+    }
+
     private func loadAudioResources() async {
         crackleSound = await loadAudio(named: "fire_crackle", ext: "wav", shouldLoop: true)
         wooshSound = await loadAudio(named: "fire_woosh_clipped", ext: "wav", shouldLoop: false)
@@ -166,9 +175,16 @@ final class HandTrackingManager {
             }
 
             let skeleton = anchor.handSkeleton
+            let deviceTransform = worldTracking.queryDeviceAnchor(atTimestamp: CACurrentMediaTime())?.originFromAnchorTransform
 
             let shouldShowFireball = GestureDetection.checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
+            let shouldUseFlamethrower = GestureDetection.checkShouldFireFlamethrower(
+                anchor: anchor,
+                skeleton: skeleton,
+                deviceTransform: deviceTransform
+            )
             let (isFist, fistDebugInfo) = GestureDetection.checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
+            let palmNormal = GestureDetection.getPalmNormal(anchor: anchor, skeleton: skeleton)
 
             let earlyFistPosition = GestureDetection.getFistPosition(anchor: anchor, skeleton: skeleton)
 
@@ -188,6 +204,8 @@ final class HandTrackingManager {
             if isLeft {
                 if isCollidingWithFireball {
                     leftHandGestureState = .collision
+                } else if shouldUseFlamethrower {
+                    leftHandGestureState = .flamethrower
                 } else if isFist {
                     leftHandGestureState = .fist
                 } else if shouldShowFireball {
@@ -199,6 +217,8 @@ final class HandTrackingManager {
             } else {
                 if isCollidingWithFireball {
                     rightHandGestureState = .collision
+                } else if shouldUseFlamethrower {
+                    rightHandGestureState = .flamethrower
                 } else if isFist {
                     rightHandGestureState = .fist
                 } else if shouldShowFireball {
@@ -220,10 +240,26 @@ final class HandTrackingManager {
 
             if isLeft {
                 await handleTrackingRecovered(isLeft: true, position: palmPosition)
-                await updateLeftHand(shouldShow: shouldShowFireball, position: palmPosition, fistPosition: fistPosition, isFist: isFist, anchor: anchor)
+                await updateLeftHand(
+                    shouldShow: shouldShowFireball,
+                    shouldFlamethrower: shouldUseFlamethrower,
+                    position: palmPosition,
+                    palmNormal: palmNormal,
+                    fistPosition: fistPosition,
+                    isFist: isFist,
+                    anchor: anchor
+                )
             } else {
                 await handleTrackingRecovered(isLeft: false, position: palmPosition)
-                await updateRightHand(shouldShow: shouldShowFireball, position: palmPosition, fistPosition: fistPosition, isFist: isFist, anchor: anchor)
+                await updateRightHand(
+                    shouldShow: shouldShowFireball,
+                    shouldFlamethrower: shouldUseFlamethrower,
+                    position: palmPosition,
+                    palmNormal: palmNormal,
+                    fistPosition: fistPosition,
+                    isFist: isFist,
+                    anchor: anchor
+                )
             }
 
             // Check for fireball combining after processing hand update
@@ -414,8 +450,23 @@ final class HandTrackingManager {
 
     // MARK: - Left Hand Update
 
-    private func updateLeftHand(shouldShow: Bool, position: SIMD3<Float>, fistPosition: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
+    private func updateLeftHand(
+        shouldShow: Bool,
+        shouldFlamethrower: Bool,
+        position: SIMD3<Float>,
+        palmNormal: SIMD3<Float>?,
+        fistPosition: SIMD3<Float>,
+        isFist: Bool,
+        anchor: HandAnchor
+    ) async {
         GestureDetection.updatePositionHistory(for: &leftHandState, position: fistPosition)
+
+        if shouldFlamethrower {
+            await updateFlamethrower(for: .left, position: position, palmNormal: palmNormal)
+            return
+        } else if leftHandState.isUsingFlamethrower {
+            await stopFlamethrower(for: .left)
+        }
 
         if leftHandState.suppressSpawnUntilRelease && !shouldShow {
             leftHandState.suppressSpawnUntilRelease = false
@@ -505,8 +556,23 @@ final class HandTrackingManager {
 
     // MARK: - Right Hand Update
 
-    private func updateRightHand(shouldShow: Bool, position: SIMD3<Float>, fistPosition: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
+    private func updateRightHand(
+        shouldShow: Bool,
+        shouldFlamethrower: Bool,
+        position: SIMD3<Float>,
+        palmNormal: SIMD3<Float>?,
+        fistPosition: SIMD3<Float>,
+        isFist: Bool,
+        anchor: HandAnchor
+    ) async {
         GestureDetection.updatePositionHistory(for: &rightHandState, position: fistPosition)
+
+        if shouldFlamethrower {
+            await updateFlamethrower(for: .right, position: position, palmNormal: palmNormal)
+            return
+        } else if rightHandState.isUsingFlamethrower {
+            await stopFlamethrower(for: .right)
+        }
 
         if rightHandState.suppressSpawnUntilRelease && !shouldShow {
             rightHandState.suppressSpawnUntilRelease = false
@@ -591,6 +657,130 @@ final class HandTrackingManager {
             if shouldShow {
                 fireball.position = position
             }
+        }
+    }
+
+    // MARK: - Flamethrower
+
+    private func updateFlamethrower(
+        for hand: HandAnchor.Chirality,
+        position: SIMD3<Float>,
+        palmNormal: SIMD3<Float>?
+    ) async {
+        guard let palmNormal = palmNormal, simd_length(palmNormal) > 0.001 else {
+            await stopFlamethrower(for: hand)
+            return
+        }
+
+        if hand == .left, leftHandState.fireball != nil {
+            leftHandState.despawnTask?.cancel()
+            leftHandState.despawnTask = nil
+            await extinguishLeft()
+        } else if hand == .right, rightHandState.fireball != nil {
+            rightHandState.despawnTask?.cancel()
+            rightHandState.despawnTask = nil
+            await extinguishRight()
+        }
+
+        var state = hand == .left ? leftHandState : rightHandState
+
+        if state.flamethrower == nil {
+            let stream = await createFlamethrower()
+            stream.transform.scale = [1, 1, 1]
+            rootEntity.addChild(stream)
+
+            if state.flamethrowerAudio == nil, let crackle = crackleSound {
+                let controller = stream.playAudio(crackle)
+                controller.gain = -6
+                controller.fade(to: -2, duration: 0.2)
+                state.flamethrowerAudio = controller
+            }
+
+            state.flamethrower = stream
+        }
+
+        guard let flamethrower = state.flamethrower else { return }
+
+        let direction = simd_normalize(palmNormal)
+        let origin = position + direction * 0.05
+
+        let maxRange = GestureConstants.flamethrowerRange
+        let hit = CollisionSystem.raycastBeam(
+            origin: origin,
+            direction: direction,
+            maxDistance: maxRange,
+            meshCache: persistentMeshCache
+        )
+
+        var lengthFactor: Float = 1.0
+
+        if let hit = hit {
+            let distance = min(simd_distance(origin, hit.position), maxRange)
+            lengthFactor = max(0.25, distance / maxRange)
+
+            let now = CACurrentMediaTime()
+            if now - state.lastFlamethrowerScorchTime > GestureConstants.flamethrowerScorchCooldown {
+                state.lastFlamethrowerScorchTime = now
+                await spawnFlamethrowerScorch(at: hit.position, normal: hit.normal)
+            }
+        }
+
+        var transform = flamethrower.transform
+        transform.translation = origin
+        transform.rotation = simd_quatf(from: SIMD3<Float>(0, 0, 1), to: direction)
+        transform.scale = [1, 1, lengthFactor]
+        flamethrower.transform = transform
+
+        state.isUsingFlamethrower = true
+
+        if hand == .left {
+            leftHandState = state
+        } else {
+            rightHandState = state
+        }
+    }
+
+    private func stopFlamethrower(for hand: HandAnchor.Chirality) async {
+        var state = hand == .left ? leftHandState : rightHandState
+
+        guard state.isUsingFlamethrower || state.flamethrower != nil else { return }
+
+        if let audio = state.flamethrowerAudio {
+            audio.fade(to: -80, duration: 0.2)
+            Task {
+                try? await Task.sleep(for: .milliseconds(240))
+                audio.stop()
+            }
+        }
+
+        state.flamethrower?.removeFromParent()
+        state.flamethrower = nil
+        state.flamethrowerAudio = nil
+        state.isUsingFlamethrower = false
+        state.lastFlamethrowerScorchTime = 0
+
+        if hand == .left {
+            leftHandState = state
+        } else {
+            rightHandState = state
+        }
+    }
+
+    @MainActor
+    private func spawnFlamethrowerScorch(at position: SIMD3<Float>, normal: SIMD3<Float>) async {
+        let scorchScale = GestureConstants.flamethrowerScorchScale * Float.random(in: 0.9...1.05)
+        let scorch = createFlamethrowerScorchMark(scale: scorchScale)
+        let scorchPosition = position + normal * 0.008
+        scorch.position = scorchPosition
+        scorch.look(at: scorchPosition - normal, from: scorchPosition, relativeTo: nil)
+        scorch.scale = [scorchScale, scorchScale, scorchScale]
+
+        rootEntity.addChild(scorch)
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(Int(GestureConstants.flamethrowerScorchLifetime * 1000)))
+            await fadeOutScorch(scorch, duration: 0.45)
+            scorch.removeFromParent()
         }
     }
 
@@ -707,6 +897,7 @@ final class HandTrackingManager {
     }
 
     private func forceExtinguishLeft() async {
+        await stopFlamethrower(for: .left)
         if let fireball = leftHandState.fireball {
             leftHandState.crackleController?.stop()
             let smokePuff = createSmokePuff()
@@ -728,6 +919,7 @@ final class HandTrackingManager {
     }
 
     private func forceExtinguishRight() async {
+        await stopFlamethrower(for: .right)
         if let fireball = rightHandState.fireball {
             rightHandState.crackleController?.stop()
             let smokePuff = createSmokePuff()
@@ -752,6 +944,9 @@ final class HandTrackingManager {
 
     private func handleTrackingLost(isLeft: Bool) async {
         if isLeft {
+            if leftHandState.isUsingFlamethrower {
+                await stopFlamethrower(for: .left)
+            }
             guard leftHandState.fireball != nil else { return }
             leftHandState.isTrackingLost = true
             leftHandState.lastKnownPosition = leftHandState.fireball?.position
@@ -763,6 +958,9 @@ final class HandTrackingManager {
                 await self.forceExtinguishLeft()
             }
         } else {
+            if rightHandState.isUsingFlamethrower {
+                await stopFlamethrower(for: .right)
+            }
             guard rightHandState.fireball != nil else { return }
             rightHandState.isTrackingLost = true
             rightHandState.lastKnownPosition = rightHandState.fireball?.position
@@ -1262,6 +1460,13 @@ final class HandTrackingManager {
 
     private func createHandFireball() async -> Entity {
         if let template = fireballTemplate {
+            return template.clone(recursive: true)
+        }
+        return Entity()
+    }
+
+    private func createFlamethrower() async -> Entity {
+        if let template = flamethrowerTemplate {
             return template.clone(recursive: true)
         }
         return Entity()

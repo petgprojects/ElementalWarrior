@@ -18,6 +18,7 @@ enum HandGestureState: String {
     case summon = "SUMMON"
     case holdingFireball = "HOLDING"
     case collision = "COLLISION"
+    case flamethrower = "FLAME"
 }
 
 // MARK: - Per-Hand State
@@ -27,6 +28,12 @@ struct HandState {
     var fireball: Entity?
     var isShowingFireball: Bool = false
     var isAnimating: Bool = false
+
+    // Flamethrower stream state
+    var flamethrower: Entity?
+    var flamethrowerAudio: AudioPlaybackController?
+    var isUsingFlamethrower: Bool = false
+    var lastFlamethrowerScorchTime: TimeInterval = 0
 
     // Fields for throwing system
     var despawnTask: Task<Void, Never>?
@@ -90,4 +97,12 @@ enum GestureConstants {
     static let megaExplosionScale: Float = 2.0                // scale multiplier for explosion
     static let megaScorchScale: Float = 2.0                   // scale multiplier for scorch mark
     static let megaAudioGainBoost: Double = 6.0               // dB boost for mega sounds
+
+    // Flamethrower constants
+    static let flamethrowerRange: Float = 8.0                 // meters max flame reach
+    static let flamethrowerForwardDotThreshold: Float = 0.55  // palm alignment with gaze
+    static let flamethrowerUpRejectThreshold: Float = 0.35    // reject if palm is too upward/downward
+    static let flamethrowerScorchCooldown: TimeInterval = 0.35 // seconds between scorch spawns
+    static let flamethrowerScorchScale: Float = 0.55          // default scorch size for flame hits
+    static let flamethrowerScorchLifetime: TimeInterval = 6.0 // seconds before scorch fades
 }

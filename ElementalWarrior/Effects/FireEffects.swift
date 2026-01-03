@@ -25,7 +25,6 @@ import CoreGraphics
 // Set to nil to force regeneration with new parameters
 // UPDATED: Now using enhanced radial gradient with burnt texture detail
 private var cachedScorchTexture: TextureResource? = nil
-private var cachedScorchDetailTexture: TextureResource? = nil
 
 // MARK: - Fireball Effect
 
@@ -341,10 +340,6 @@ func createScorchMark() -> Entity {
         cachedScorchTexture = generateRadialGradientTexture()
     }
 
-    if cachedScorchDetailTexture == nil {
-        cachedScorchDetailTexture = try? TextureResource.load(named: "scorch_mark")
-    }
-
     var material = UnlitMaterial()
     if let texture = cachedScorchTexture {
         material.color = .init(tint: .init(white: 0.02, alpha: 1.0), texture: .init(texture))
@@ -364,42 +359,30 @@ func createScorchMark() -> Entity {
     baseModel.orientation = simd_quatf(angle: randomAngle, axis: [0, 0, 1])
     entity.addChild(baseModel)
 
-    if let detailTexture = cachedScorchDetailTexture {
-        var detailMaterial = UnlitMaterial()
-        detailMaterial.color = .init(
-            tint: .init(red: 0.12, green: 0.06, blue: 0.03, alpha: 0.6),
-            texture: .init(detailTexture)
-        )
-        detailMaterial.blending = .transparent(opacity: 0.6)
-
-        let detailModel = ModelEntity(mesh: mesh, materials: [detailMaterial])
-        let detailScale = Float.random(in: 0.55...0.72)
-        detailModel.scale = [detailScale, detailScale, 1.0]
-        detailModel.orientation = simd_quatf(
-            angle: randomAngle + Float.random(in: -0.6...0.6),
-            axis: [0, 0, 1]
-        )
-        detailModel.position = [0, 0, 0.001]
-        entity.addChild(detailModel)
-    }
-
     if let texture = cachedScorchTexture {
-        var emberMaterial = UnlitMaterial()
-        emberMaterial.color = .init(
-            tint: .init(red: 1.0, green: 0.35, blue: 0.12, alpha: 0.45),
+        var glowMaterial = UnlitMaterial()
+        glowMaterial.color = .init(
+            tint: .init(red: 1.0, green: 0.55, blue: 0.2, alpha: 0.7),
             texture: .init(texture)
         )
-        emberMaterial.blending = .transparent(opacity: 0.5)
+        glowMaterial.blending = .transparent(opacity: 0.8)
 
-        let emberModel = ModelEntity(mesh: mesh, materials: [emberMaterial])
-        let emberScale = Float.random(in: 0.35...0.52)
-        emberModel.scale = [emberScale, emberScale, 1.0]
-        emberModel.orientation = simd_quatf(
+        let glowModel = ModelEntity(mesh: mesh, materials: [glowMaterial])
+        let glowScale = Float.random(in: 0.72...0.95)
+        let glowBaseScale: SIMD3<Float> = [glowScale, glowScale, 1.0]
+        glowModel.scale = glowBaseScale
+        glowModel.orientation = simd_quatf(
             angle: randomAngle + Float.random(in: -0.4...0.4),
             axis: [0, 0, 1]
         )
-        emberModel.position = [0, 0, 0.002]
-        entity.addChild(emberModel)
+        glowModel.position = [0, 0, 0.002]
+        entity.addChild(glowModel)
+        animateEmberGlow(
+            model: glowModel,
+            texture: texture,
+            baseScale: glowBaseScale,
+            intensityScale: 0.75
+        )
     }
 
     // Lingering Smoke Effect
@@ -627,10 +610,10 @@ private func generateRadialGradientTexture() -> TextureResource? {
 
             let pixelAlpha = UInt8(max(0, min(255, alpha * 255)))
 
-            // Black color with calculated alpha
-            data[offset] = 0     // R
-            data[offset + 1] = 0 // G
-            data[offset + 2] = 0 // B
+            // White color with calculated alpha (lets tint control color)
+            data[offset] = 255     // R
+            data[offset + 1] = 255 // G
+            data[offset + 2] = 255 // B
             data[offset + 3] = pixelAlpha // A
         }
     }
@@ -787,4 +770,59 @@ private func createLingeringSmoke() -> Entity {
     
     entity.components.set(emitter)
     return entity
+}
+
+private func animateEmberGlow(
+    model: ModelEntity,
+    texture: TextureResource,
+    baseScale: SIMD3<Float>,
+    intensityScale: Double
+) {
+    Task { @MainActor in
+        let start = Date()
+        let duration = Double.random(in: 6.0...8.5)
+        let phase = Double.random(in: 0...(2.0 * Double.pi))
+
+        while Date().timeIntervalSince(start) < duration {
+            guard model.parent != nil else { break }
+            let t = Date().timeIntervalSince(start)
+            let cooling = max(0.0, 1.0 - t / duration)
+            let pulse = 0.5 + 0.5 * sin(t * 5.0 + phase)
+            let flicker = Double.random(in: -0.12...0.12)
+            let intensity = max(0.0, min(1.0, (pulse + flicker) * cooling * intensityScale))
+
+            let green = 0.15 + 0.75 * intensity
+            let blue = 0.03 + 0.3 * intensity
+            let alpha = 0.1 + 0.7 * intensity
+
+            var material = UnlitMaterial()
+            material.color = .init(
+                tint: .init(red: 1.0, green: green, blue: blue, alpha: alpha),
+                texture: .init(texture)
+            )
+            material.blending = .transparent(opacity: 0.85)
+
+            if var modelComponent = model.model {
+                modelComponent.materials = [material]
+                model.model = modelComponent
+            }
+
+            let scalePulse = Float(1.0 + 0.03 * sin(t * 4.0 + phase * 0.6))
+            model.scale = baseScale * scalePulse
+
+            try? await Task.sleep(for: .milliseconds(70))
+        }
+
+        guard model.parent != nil else { return }
+        var material = UnlitMaterial()
+        material.color = .init(
+            tint: .init(red: 0.25, green: 0.07, blue: 0.03, alpha: 0.2),
+            texture: .init(texture)
+        )
+        material.blending = .transparent(opacity: 0.5)
+        if var modelComponent = model.model {
+            modelComponent.materials = [material]
+            model.model = modelComponent
+        }
+    }
 }

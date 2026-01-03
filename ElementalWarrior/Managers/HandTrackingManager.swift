@@ -420,6 +420,7 @@ final class HandTrackingManager {
         if leftHandState.suppressSpawnUntilRelease && !shouldShow {
             leftHandState.suppressSpawnUntilRelease = false
         }
+        let canSummon = CACurrentMediaTime() >= leftHandState.nextSummonAllowedTime
 
         // Same-hand punch
         if isFist, let fireball = leftHandState.fireball,
@@ -448,13 +449,14 @@ final class HandTrackingManager {
 
             if speed > GestureConstants.punchVelocityThreshold && distance < GestureConstants.punchProximityThreshold {
                 print("[LEFT CROSS-HAND] LAUNCHING RIGHT FIREBALL!")
+                rightHandState.nextSummonAllowedTime = CACurrentMediaTime() + GestureConstants.crossPunchResummonDelay
                 await launchFireball(from: .right)
                 return
             }
         }
 
         // State transitions
-        if shouldShow && !leftHandState.isShowingFireball && !leftHandState.isAnimating && !leftHandState.suppressSpawnUntilRelease {
+        if shouldShow && canSummon && !leftHandState.isShowingFireball && !leftHandState.isAnimating && !leftHandState.suppressSpawnUntilRelease {
             leftHandState.despawnTask?.cancel()
             leftHandState.despawnTask = nil
             leftHandState.isPendingDespawn = false
@@ -509,6 +511,7 @@ final class HandTrackingManager {
         if rightHandState.suppressSpawnUntilRelease && !shouldShow {
             rightHandState.suppressSpawnUntilRelease = false
         }
+        let canSummon = CACurrentMediaTime() >= rightHandState.nextSummonAllowedTime
 
         // Same-hand punch
         if isFist, let fireball = rightHandState.fireball,
@@ -537,13 +540,14 @@ final class HandTrackingManager {
 
             if speed > GestureConstants.punchVelocityThreshold && distance < GestureConstants.punchProximityThreshold {
                 print("[RIGHT CROSS-HAND] LAUNCHING LEFT FIREBALL!")
+                leftHandState.nextSummonAllowedTime = CACurrentMediaTime() + GestureConstants.crossPunchResummonDelay
                 await launchFireball(from: .left)
                 return
             }
         }
 
         // State transitions
-        if shouldShow && !rightHandState.isShowingFireball && !rightHandState.isAnimating && !rightHandState.suppressSpawnUntilRelease {
+        if shouldShow && canSummon && !rightHandState.isShowingFireball && !rightHandState.isAnimating && !rightHandState.suppressSpawnUntilRelease {
             rightHandState.despawnTask?.cancel()
             rightHandState.despawnTask = nil
             rightHandState.isPendingDespawn = false

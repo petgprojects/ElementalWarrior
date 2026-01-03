@@ -42,7 +42,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Fire trail effect on flying projectiles
   - Five-layer explosion effect (white flash, yellow core, orange flame, red outer, smoke)
   - Smoke puff effects when fireballs extinguish
-  - Organic scorch marks on impact with textured soot and soft-edged meshes
+  - Organic scorch marks on impact with textured soot, ember glow, and subtle wall smoke
   - Dynamic explosion lighting with fade animation
   - Programmatically generated particle emitters for optimal performance
 

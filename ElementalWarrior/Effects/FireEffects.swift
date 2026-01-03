@@ -347,9 +347,9 @@ func createScorchMark() -> Entity {
 
     var material = UnlitMaterial()
     if let texture = cachedScorchTexture {
-        material.color = .init(tint: .black, texture: .init(texture))
+        material.color = .init(tint: .init(white: 0.02, alpha: 1.0), texture: .init(texture))
     } else {
-        material.color = .init(tint: .black)
+        material.color = .init(tint: .init(white: 0.02, alpha: 1.0))
     }
     material.blending = .transparent(opacity: 0.9)
 
@@ -367,13 +367,13 @@ func createScorchMark() -> Entity {
     if let detailTexture = cachedScorchDetailTexture {
         var detailMaterial = UnlitMaterial()
         detailMaterial.color = .init(
-            tint: .init(red: 0.08, green: 0.05, blue: 0.03, alpha: 0.75),
+            tint: .init(red: 0.12, green: 0.06, blue: 0.03, alpha: 0.6),
             texture: .init(detailTexture)
         )
-        detailMaterial.blending = .transparent(opacity: 0.7)
+        detailMaterial.blending = .transparent(opacity: 0.6)
 
         let detailModel = ModelEntity(mesh: mesh, materials: [detailMaterial])
-        let detailScale = Float.random(in: 0.65...0.82)
+        let detailScale = Float.random(in: 0.55...0.72)
         detailModel.scale = [detailScale, detailScale, 1.0]
         detailModel.orientation = simd_quatf(
             angle: randomAngle + Float.random(in: -0.6...0.6),
@@ -381,6 +381,25 @@ func createScorchMark() -> Entity {
         )
         detailModel.position = [0, 0, 0.001]
         entity.addChild(detailModel)
+    }
+
+    if let texture = cachedScorchTexture {
+        var emberMaterial = UnlitMaterial()
+        emberMaterial.color = .init(
+            tint: .init(red: 1.0, green: 0.35, blue: 0.12, alpha: 0.45),
+            texture: .init(texture)
+        )
+        emberMaterial.blending = .transparent(opacity: 0.5)
+
+        let emberModel = ModelEntity(mesh: mesh, materials: [emberMaterial])
+        let emberScale = Float.random(in: 0.35...0.52)
+        emberModel.scale = [emberScale, emberScale, 1.0]
+        emberModel.orientation = simd_quatf(
+            angle: randomAngle + Float.random(in: -0.4...0.4),
+            axis: [0, 0, 1]
+        )
+        emberModel.position = [0, 0, 0.002]
+        entity.addChild(emberModel)
     }
 
     // Lingering Smoke Effect
@@ -530,13 +549,48 @@ private func generateRadialGradientTexture() -> TextureResource? {
 
     var data = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
 
+    let coarseSize = 24
+    let fineSize = 64
+    let coarseNoise = (0..<(coarseSize * coarseSize)).map { _ in Float.random(in: 0.0...1.0) }
+    let fineNoise = (0..<(fineSize * fineSize)).map { _ in Float.random(in: 0.0...1.0) }
+
+    func lerp(_ a: Float, _ b: Float, _ t: Float) -> Float {
+        a + (b - a) * t
+    }
+
+    func fract(_ v: Float) -> Float {
+        v - floorf(v)
+    }
+
+    func sampleNoise(_ x: Float, _ y: Float, size: Int, data: [Float]) -> Float {
+        let fx = x * Float(size - 1)
+        let fy = y * Float(size - 1)
+        let x0 = min(max(Int(floorf(fx)), 0), size - 1)
+        let y0 = min(max(Int(floorf(fy)), 0), size - 1)
+        let x1 = min(x0 + 1, size - 1)
+        let y1 = min(y0 + 1, size - 1)
+        let tx = fx - Float(x0)
+        let ty = fy - Float(y0)
+
+        let v00 = data[y0 * size + x0]
+        let v10 = data[y0 * size + x1]
+        let v01 = data[y1 * size + x0]
+        let v11 = data[y1 * size + x1]
+
+        let vx0 = lerp(v00, v10, tx)
+        let vx1 = lerp(v01, v11, tx)
+        return lerp(vx0, vx1, ty)
+    }
+
     for y in 0..<height {
         for x in 0..<width {
             let offset = (y * width + x) * bytesPerPixel
 
             // Normalize coordinates -1 to 1
-            let nx = (Float(x) / Float(width)) * 2 - 1
-            let ny = (Float(y) / Float(height)) * 2 - 1
+            let fx = Float(x) / Float(max(1, width - 1))
+            let fy = Float(y) / Float(max(1, height - 1))
+            let nx = fx * 2 - 1
+            let ny = fy * 2 - 1
 
             // Distance from center
             let dist = sqrt(nx*nx + ny*ny)
@@ -544,13 +598,19 @@ private func generateRadialGradientTexture() -> TextureResource? {
             // Base radial gradient - solid center fading to edges
             var alpha = 1.0 - smoothstep(edge0: 0.3, edge1: 1.0, x: dist)
 
-            // Add burnt texture detail (high-frequency noise)
-            let texNoise = sin(nx * 40.0) * cos(ny * 40.0)
-            let turbulence = texNoise * 0.5 + 0.5
+            // Add burnt texture detail (smooth noise, avoids grid artifacts)
+            let coarse = sampleNoise(fx, fy, size: coarseSize, data: coarseNoise)
+            let fine = sampleNoise(
+                fract(fx * 2.2 + 0.13),
+                fract(fy * 2.2 + 0.37),
+                size: fineSize,
+                data: fineNoise
+            )
+            let turbulence = (coarse * 0.7 + fine * 0.3)
 
             // Center is more solid, edges are patchy (like burnt material)
             let solidCore = 1.0 - smoothstep(edge0: 0.0, edge1: 0.6, x: dist)
-            let textureMix = solidCore * 0.95 + (1.0 - solidCore) * turbulence
+            let textureMix = solidCore * 0.95 + (1.0 - solidCore) * (0.7 + 0.3 * turbulence)
 
             alpha *= textureMix
 
@@ -704,23 +764,24 @@ private func createLingeringSmoke() -> Entity {
     emitter.emitterShape = .sphere
     emitter.emitterShapeSize = [0.06, 0.06, 0.06]
     
-    emitter.mainEmitter.birthRate = 12
-    emitter.mainEmitter.lifeSpan = 2.0
-    emitter.mainEmitter.lifeSpanVariation = 1.0
+    emitter.mainEmitter.birthRate = 8
+    emitter.mainEmitter.lifeSpan = 2.5
+    emitter.mainEmitter.lifeSpanVariation = 0.6
     
     // Emit out along +Z (wall normal in local space)
     emitter.emissionDirection = [0, 0, 1]
     emitter.birthDirection = .local
     
-    emitter.speed = 0.04
-    emitter.speedVariation = 0.02
+    emitter.speed = 0.035
+    emitter.speedVariation = 0.015
+    emitter.mainEmitter.acceleration = [0.0, 0.02, 0.05]
     
-    emitter.mainEmitter.size = 0.03
+    emitter.mainEmitter.size = 0.028
     emitter.mainEmitter.sizeVariation = 0.02
-    emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 3.0
+    emitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 2.6
     
     emitter.mainEmitter.color = .evolving(
-        start: .single(.init(red: 0.1, green: 0.1, blue: 0.1, alpha: 0.3)),
+        start: .single(.init(red: 0.12, green: 0.1, blue: 0.08, alpha: 0.25)),
         end: .single(.init(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.0))
     )
     

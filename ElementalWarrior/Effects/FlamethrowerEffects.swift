@@ -97,8 +97,8 @@ private func baseEmitter(emitterShapeSize: SIMD3<Float>, emissionDirection: SIMD
 private func createCoreJet(scale: Float) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.035 * scale, 0.035 * scale, 0.035 * scale], emissionDirection: [0, 0, 1])
 
-    emitter.mainEmitter.birthRate = 2200 * scale
-    emitter.mainEmitter.lifeSpan = 0.38
+    emitter.mainEmitter.birthRate = 1800 * scale
+    emitter.mainEmitter.lifeSpan = 0.35
     emitter.mainEmitter.lifeSpanVariation = 0.08
     emitter.mainEmitter.size = 0.055 * scale
     emitter.mainEmitter.sizeVariation = 0.02 * scale
@@ -126,8 +126,8 @@ private func createCoreJet(scale: Float) -> Entity {
 private func createBodyJet(scale: Float) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.05 * scale, 0.05 * scale, 0.05 * scale], emissionDirection: [0, 0, 1])
 
-    emitter.mainEmitter.birthRate = 1600 * scale
-    emitter.mainEmitter.lifeSpan = 0.6
+    emitter.mainEmitter.birthRate = 1350 * scale
+    emitter.mainEmitter.lifeSpan = 0.52
     emitter.mainEmitter.lifeSpanVariation = 0.12
     emitter.mainEmitter.size = 0.09 * scale
     emitter.mainEmitter.sizeVariation = 0.04 * scale
@@ -156,7 +156,7 @@ private func createBodyJet(scale: Float) -> Entity {
 private func createSparkSpray(scale: Float) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.03 * scale, 0.03 * scale, 0.03 * scale], emissionDirection: [0, 0.1, 1])
 
-    emitter.mainEmitter.birthRate = 260 * scale
+    emitter.mainEmitter.birthRate = 210 * scale
     emitter.mainEmitter.lifeSpan = 0.7
     emitter.mainEmitter.lifeSpanVariation = 0.15
     emitter.mainEmitter.size = 0.018 * scale
@@ -185,8 +185,8 @@ private func createSparkSpray(scale: Float) -> Entity {
 private func createHeatSmoke(scale: Float) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.055 * scale, 0.055 * scale, 0.055 * scale], emissionDirection: [0, 0, 1])
 
-    emitter.mainEmitter.birthRate = 520 * scale
-    emitter.mainEmitter.lifeSpan = 1.25
+    emitter.mainEmitter.birthRate = 420 * scale
+    emitter.mainEmitter.lifeSpan = 1.05
     emitter.mainEmitter.lifeSpanVariation = 0.2
     emitter.mainEmitter.size = 0.11 * scale
     emitter.mainEmitter.sizeVariation = 0.05 * scale
@@ -217,7 +217,7 @@ private func createMuzzleFlash(scale: Float) -> Entity {
     var emitter = baseEmitter(emitterShapeSize: [0.035 * scale, 0.035 * scale, 0.035 * scale], emissionDirection: [0, 0, 1])
 
     emitter.timing = .repeating(warmUp: 0.0, emit: .init(duration: 10000))
-    emitter.mainEmitter.birthRate = 900 * scale
+    emitter.mainEmitter.birthRate = 720 * scale
     emitter.mainEmitter.lifeSpan = 0.18
     emitter.mainEmitter.lifeSpanVariation = 0.05
     emitter.mainEmitter.size = 0.12 * scale

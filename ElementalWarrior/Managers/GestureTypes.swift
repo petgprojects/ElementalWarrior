@@ -34,6 +34,9 @@ struct HandState {
     var flamethrowerAudio: AudioPlaybackController?
     var isUsingFlamethrower: Bool = false
     var lastFlamethrowerScorchTime: TimeInterval = 0
+    var lastFlamethrowerHitDistance: Float = GestureConstants.flamethrowerRange
+    var lastFlamethrowerRaycastTime: TimeInterval = 0
+    var flamethrowerDespawnTask: Task<Void, Never>?
 
     // Fields for throwing system
     var despawnTask: Task<Void, Never>?
@@ -105,4 +108,6 @@ enum GestureConstants {
     static let flamethrowerScorchCooldown: TimeInterval = 0.35 // seconds between scorch spawns
     static let flamethrowerScorchScale: Float = 0.55          // default scorch size for flame hits
     static let flamethrowerScorchLifetime: TimeInterval = 6.0 // seconds before scorch fades
+    static let flamethrowerRaycastInterval: TimeInterval = 0.04 // seconds between beam raycasts (per hand)
+    static let flamethrowerTrackingGraceDuration: TimeInterval = 0.5 // seconds before despawn after tracking loss
 }

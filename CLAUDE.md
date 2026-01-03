@@ -41,17 +41,35 @@ The app uses a dual-space architecture:
 ### Core Components
 
 **HandTrackingManager** (Managers/HandTrackingManager.swift)
-- Central system managing ARKit hand tracking, projectile launching, and collisions
+- Central orchestrator for ARKit hand tracking, projectile launching, and collisions
 - Uses `ARKitSession` with `HandTrackingProvider`, `WorldTrackingProvider`, and `SceneReconstructionProvider`
 - Maintains independent `HandState` for left and right hands with intent-based delayed despawn
 - Spawns/extinguishes fireballs based on hand gestures (open palm facing up)
-- Punch detection: fist gesture + velocity threshold (1.5 m/s) to launch fireballs
+- Punch detection: fist gesture + velocity threshold (0.3 m/s) to launch fireballs
 - Cross-hand punch support (punch with opposite hand)
 - Gaze-based targeting using device head direction
 - Projectile flight at 12 m/s with 20m max range
 - **Persistent mesh collision system** - scanned geometry stays in memory even when out of LiDAR range
-- Ray-triangle intersection (Möller–Trumbore algorithm) against cached mesh geometry
-- Transform pipeline: Joint space → Anchor space → World space
+- Coordinates with `GestureDetection`, `CollisionSystem`, and effect modules
+
+**GestureTypes** (Managers/GestureTypes.swift)
+- Shared data structures: `HandGestureState`, `HandState`, `ProjectileState`, `CachedMeshGeometry`
+- `GestureConstants` enum with all timing and threshold values
+
+**GestureDetection** (Managers/GestureDetection.swift)
+- Multi-signal fist detection using 4 methods:
+  1. Finger alignment (palm-to-finger direction)
+  2. Thumb curl detection
+  3. Hand compactness ratio
+  4. Fingertip clustering
+- Open palm detection (palm orientation + finger extension)
+- Position and velocity calculation helpers
+
+**CollisionSystem** (Managers/CollisionSystem.swift)
+- Ray-triangle intersection using Möller–Trumbore algorithm
+- Raycast against cached mesh geometry for persistent collision
+- `HitResult` struct with position and surface normal
+- `CachedMeshGeometry` initializer from `MeshAnchor`
 
 **Persistent Room Scanning**
 - `CachedMeshGeometry` struct extracts and stores vertices + triangle indices from MeshAnchors
@@ -60,26 +78,51 @@ The app uses a dual-space architecture:
 - Visual scan overlay (semi-transparent cyan) shows scanned surfaces
 - UI controls: toggle visualization, clear scan data, view scan statistics
 
-**Fire Effects** (Effects/FireEffects.swift)
-- `createRealisticFireball()` - Multi-layered particle effect (4 layers)
+### Fire Effects (Effects/)
+
+**FireballEffects.swift**
+- `createRealisticFireball()` - Multi-layered particle effect (4 layers: white core, yellow inner, orange spikes, red outer)
 - `createFireTrail()` - Trail effect for flying projectiles
-- `createExplosionEffect()` - 5-layer explosion (flash, core, flame, outer, smoke)
+- `createSmokePuff()` - Smoke effect when fireballs extinguish
 - All effects include PointLight components for environmental lighting
-- All particle properties scale proportionally for consistent visuals
+
+**ExplosionEffects.swift**
+- `createExplosionEffect()` - 5-layer explosion (flash, core, flame, outer, smoke)
+- Dynamic point light with fade animation
+
+**ScorchMarkEffects.swift**
+- `createScorchMark()` - Multi-layered procedural scorch marks
+- `generateIrregularSootMesh()` - Organic edge variation with sinusoidal lobes and spurs
+- `generateRadialGradientTexture()` - Burnt texture with turbulence noise
+- Animated ember glow effect with pulsing heat colors
+- Lingering smoke particle effect rising from impact
+- 16-second lifetime with 1-second fade out
+
+### Audio System
+
+**Sound Effects**
+- Fire crackle (looping) - Plays while holding fireball, fades in/out
+- Woosh sound - Plays on fireball launch
+- Explosion sound - Plays on impact
+
+Audio is loaded from bundle or NSDataAsset fallback, with proper gain control and fade transitions.
 
 ### Hand Gesture Recognition
 
-The system detects multiple gestures:
+The system detects multiple gestures using the `GestureDetection` module:
 
 1. **Open Palm Facing Up** - Spawns fireball
    - Palm orientation: wrist -Y axis dot product >0.4 with world up
    - Hand openness: finger tip-to-knuckle distance >5cm
 
-2. **Fist Detection** - For punch-to-throw
-   - Finger extension <3.5cm threshold for index, middle, ring fingers
+2. **Fist Detection** - For punch-to-throw (multi-signal, requires 3/4 signals)
+   - Finger alignment: palm-to-finger direction alignment <0.75
+   - Thumb curl: thumb tip close to middle finger or folded toward wrist
+   - Hand compactness: tip-to-wrist / knuckle-to-wrist ratio <1.4
+   - Fingertip clustering: max fingertip spread <8cm
 
 3. **Punch Detection** - Launches fireball
-   - Fist + velocity >1.5 m/s + proximity within 15cm of fireball
+   - Fist + velocity >0.3 m/s + proximity within 20cm of fireball
    - Supports cross-hand punching (punch with opposite hand)
 
 ### Entity State Management
@@ -93,23 +136,24 @@ The system detects multiple gestures:
 - `isPendingDespawn: Bool` - Fireball awaiting despawn (can still be punched)
 - `lastKnownPosition: SIMD3<Float>?` - Position before tracking loss
 - `isTrackingLost: Bool` - Whether hand tracking was lost
+- `crackleController: AudioPlaybackController?` - Looping audio controller
 
 **State transitions:**
-- Spawn: 0.5s scale animation (0.01 → 1.0)
+- Spawn: 0.5s scale animation (0.01 → 1.0) with audio fade-in
 - Delayed despawn: 1.5s grace period after gesture ends (fireball floats, can be punched)
-- Extinguish: 0.1s shrink + smoke puff particle burst
-- Force extinguish: Immediate removal with smoke (used when tracking is lost)
-- Launch: Detach from hand, add trail effect, fly toward gaze at 12 m/s
+- Extinguish: 0.25s shrink + smoke puff particle burst + audio fade-out
+- Force extinguish: Immediate removal with smoke (used when tracking is lost after 2s grace)
+- Launch: Detach from hand, add trail effect, play woosh, fly toward gaze at 12 m/s
 
 ### Smoke Puff System
 
 When fireballs extinguish:
-1. Fireball shrinks over 0.1s
-2. Smoke puff entity spawns at same position
-3. Particle emitter bursts for 150ms
+1. Fireball shrinks over 0.25s
+2. Smoke puff entity spawns at same position, scales up
+3. Particle emitter bursts for 100ms
 4. Birth rate drops to 0 (stops new particles)
-5. Existing particles fade over 2s lifespan
-6. Entity cleanup after 2.3s total
+5. Existing particles fade over 2.5s lifespan
+6. Entity cleanup after 2.5s total
 
 ## Key Implementation Patterns
 
@@ -149,10 +193,11 @@ All emitters use:
 
 ### Performance Considerations
 
-- Fireball template is preloaded once to avoid per-spawn asset loading
+- Fireball and explosion templates are preloaded once to avoid per-spawn asset loading
 - Particle emitters use finite lifespans with automatic cleanup
 - Entity cloning (`clone(recursive: true)`) reuses template structure
-- Smoke puffs self-terminate after particle fade completes
+- Smoke puffs and scorch marks self-terminate after particle fade completes
+- Persistent mesh cache allows collision even when surfaces are out of LiDAR range
 
 ### Current Limitations
 
@@ -165,15 +210,20 @@ All emitters use:
 
 ```
 ElementalWarrior/
-├── ElementalWarriorApp.swift    # App entry, window/space definitions
-├── AppModel.swift               # Observable state (currently minimal)
-├── HomeView.swift               # Menu window with decorative fireball
-├── ArenaImmersiveView.swift     # Immersive view setup
-├── Info.plist                   # App permissions (hand/world sensing)
+├── ElementalWarriorApp.swift       # App entry, window/space definitions
+├── AppModel.swift                  # Observable state (currently minimal)
+├── HomeView.swift                  # Menu window with decorative fireball
+├── ArenaImmersiveView.swift        # Immersive view setup
+├── Info.plist                      # App permissions (hand/world sensing)
 ├── Managers/
-│   └── HandTrackingManager.swift  # Hand tracking, gestures, projectiles, collisions
+│   ├── HandTrackingManager.swift   # Central orchestrator for tracking and projectiles
+│   ├── GestureTypes.swift          # Shared types: HandState, ProjectileState, etc.
+│   ├── GestureDetection.swift      # Gesture recognition algorithms
+│   └── CollisionSystem.swift       # Raycast collision with Möller–Trumbore algorithm
 └── Effects/
-    └── FireEffects.swift          # Fireball, trail, explosion particle effects
+    ├── FireballEffects.swift       # Fireball, trail, and smoke puff effects
+    ├── ExplosionEffects.swift      # Multi-layer explosion particles
+    └── ScorchMarkEffects.swift     # Procedural scorch marks with ember glow
 ```
 
 ## Reality Composer Pro Assets

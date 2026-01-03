@@ -22,42 +22,43 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming
-- **Scene Reconstruction**: Real-world surface detection for fireball collisions
+- **Scene Reconstruction**: Real-world surface detection with persistent mesh caching for fireball collisions
 - **Gesture Recognition**:
   - Open palm facing up gesture detection to spawn fireballs
-  - Fist detection for punch-to-throw gesture
+  - Multi-signal fist detection (4 detection methods for reliability)
   - Velocity tracking for punch detection
   - Both hands work independently and simultaneously
   - Intent-based gesture system with delayed despawn (1.5s grace period)
+  - 2-second tracking loss grace period
 - **Fire Bending**:
   - Realistic multi-layered fireball particle effects
   - Fireballs appear in open palms and track hand position
   - **Punch-to-throw**: Close fist and punch to launch fireballs toward your gaze direction
+  - Cross-hand punching supported (punch opposite hand's fireball)
   - Projectiles fly at 12 m/s with fire trail effects
   - Fireballs explode on impact with walls/surfaces or after 20m max range
   - Smooth spawn/extinguish animations with smoke puffs
   - Dynamic point lighting from fireballs
+- **Audio System**:
+  - Fire crackle sound (looping) while holding fireballs with fade in/out
+  - Woosh sound on fireball launch
+  - Explosion sound on impact
 - **Visual Effects**:
   - Four-layer particle system for realistic fire (hot core, inner flame, spikes, outer flame)
   - Fire trail effect on flying projectiles
   - Five-layer explosion effect (white flash, yellow core, orange flame, red outer, smoke)
   - Smoke puff effects when fireballs extinguish
-  - Organic scorch marks on impact with textured soot, ember glow, and subtle wall smoke
+  - **Procedural scorch marks** with animated ember glow, multi-layer textures, and lingering smoke
   - Dynamic explosion lighting with fade animation
   - Programmatically generated particle emitters for optimal performance
 
 ### Planned Features
 
 - **Element Bending Expansion**
-  - Fire bending: Add projectile launching, fire shields, sustained flame jets
+  - Fire bending: Add fire shields, sustained flame jets
   - Water bending: Manipulate water projectiles and defensive waves
   - Earth bending: Launch rocks and create protective barriers
   - Air bending: Generate wind blasts and aerial evasion
-
-- **Advanced Gesture Recognition**
-  - Detect dynamic gestures (punches, sweeps, circular motions)
-  - Gesture power based on hand velocity
-  - Additional poses for different bending techniques
 
 - **AI Combat System**
   - Enemy AI with different elemental specializations
@@ -81,7 +82,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **SwiftUI**: Application UI and state management
 - **RealityKit**: 3D rendering, physics, and entity management
 - **VisionOS**: Spatial computing, hand tracking, and immersive spaces
-- **ECS (Entity Component System)**: Custom component/system architecture for game logic
+- **ARKit**: Hand tracking, world tracking, and scene reconstruction
 
 ### Key Components
 
@@ -95,21 +96,18 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **HomeView** (`HomeView.swift`): Entry point with animated fireball display and navigation controls
 - **ArenaImmersiveView** (`ArenaImmersiveView.swift`): Immersive passthrough environment with hand tracking
 
-#### Hand Tracking System
+#### Hand Tracking System (Managers/)
 
-- **HandTrackingManager** (`ArenaImmersiveView.swift:26-427`): Core hand tracking implementation
-  - Uses `ARKitSession` and `HandTrackingProvider` for real-time hand skeleton data
-  - Maintains independent `HandState` for left and right hands
-  - Gesture recognition: palm orientation + hand openness detection
-  - Per-hand fireball spawning/extinguishing with animations
-  - Preloads fireball template for performance optimization
+- **HandTrackingManager**: Central orchestrator for hand tracking, projectiles, and collision
+- **GestureTypes**: Shared data structures (`HandState`, `ProjectileState`, `CachedMeshGeometry`, `GestureConstants`)
+- **GestureDetection**: Multi-signal gesture recognition algorithms
+- **CollisionSystem**: Raycast collision using Möller–Trumbore ray-triangle intersection
 
-#### Fireball System
+#### Fire Effects System (Effects/)
 
-- **FireballEntity** (`FireballEntity.swift`): Programmatic particle effect creation
-  - `createRealisticFireball()`: Multi-layered particle emitter (4 layers)
-  - `createSmokePuff()`: Smoke effect for fireball extinguishing
-  - All effects scale proportionally for visual consistency
+- **FireballEffects**: Fireball, trail, and smoke puff particle effects
+- **ExplosionEffects**: Multi-layer explosion with dynamic lighting
+- **ScorchMarkEffects**: Procedural scorch marks with ember glow animation
 
 #### State Management
 
@@ -123,13 +121,20 @@ The goal is to create an intuitive, gesture-based combat system where:
    - Additive blend mode for glowing fire appearance
    - Color evolution with alpha fade for realistic flames
    - Four-layer fireball: hot core, inner flame, spikes, outer flame
-   - Smoke puffs with 2-second fade and auto-cleanup
+   - Smoke puffs with 2.5-second fade and auto-cleanup
 
-2. **Lighting**: Point lights attached to fireballs for environmental illumination
+2. **Scorch Marks**: Procedural burnt texture effects
+   - Irregular mesh generation with organic edges
+   - Radial gradient texture with turbulence noise
+   - Animated ember glow with pulsing heat colors
+   - Lingering smoke particle effect
+   - 16-second lifetime with fade-out
 
-3. **Animation**:
+3. **Lighting**: Point lights attached to fireballs and explosions for environmental illumination
+
+4. **Animation**:
    - Spawn animation: 0.5s scale from 0.01 → 1.0
-   - Extinguish animation: 0.1s shrink with smoke burst
+   - Extinguish animation: 0.25s shrink with smoke burst
    - Real-time position tracking following hand movement
 
 ## Project Structure
@@ -137,18 +142,23 @@ The goal is to create an intuitive, gesture-based combat system where:
 ```
 ElementalWarrior/
 ├── ElementalWarrior/
-│   ├── ElementalWarriorApp.swift      # Main app entry point
-│   ├── AppModel.swift                 # App-wide state management
-│   ├── HomeView.swift                 # Main menu interface
-│   ├── ArenaImmersiveView.swift       # Immersive view setup
-│   ├── Info.plist                     # App permissions (hand/world sensing)
+│   ├── ElementalWarriorApp.swift       # Main app entry point
+│   ├── AppModel.swift                  # App-wide state management
+│   ├── HomeView.swift                  # Main menu interface
+│   ├── ArenaImmersiveView.swift        # Immersive view setup
+│   ├── Info.plist                      # App permissions (hand/world sensing)
 │   ├── Managers/
-│   │   └── HandTrackingManager.swift  # Hand tracking, gestures, projectiles, collisions
+│   │   ├── HandTrackingManager.swift   # Central hand tracking orchestrator
+│   │   ├── GestureTypes.swift          # Shared types and constants
+│   │   ├── GestureDetection.swift      # Gesture recognition algorithms
+│   │   └── CollisionSystem.swift       # Raycast collision detection
 │   └── Effects/
-│       └── FireEffects.swift          # Fireball, trail, and explosion particle effects
-├── RealityAssetStuff/                 # Reality Composer Pro project (experimental)
-├── CLAUDE.md                          # Developer guidance for AI assistants
-└── ElementalWarrior.xcodeproj/        # Xcode project
+│       ├── FireballEffects.swift       # Fireball and trail particles
+│       ├── ExplosionEffects.swift      # Explosion particle effects
+│       └── ScorchMarkEffects.swift     # Procedural scorch marks
+├── RealityAssetStuff/                  # Reality Composer Pro project (experimental)
+├── CLAUDE.md                           # Developer guidance for AI assistants
+└── ElementalWarrior.xcodeproj/         # Xcode project
 ```
 
 ## Requirements
@@ -173,7 +183,7 @@ ElementalWarrior/
 2. Click "Start" to enter the immersive arena
 3. Open your palms facing upward to spawn fireballs (works for both hands)
 4. **To throw**: Look at your target, then make a fist and punch the fireball
-5. Fireballs fly toward where you're looking and explode on impact
+5. Fireballs fly toward where you're looking and explode on impact with scorch marks
 6. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
 7. Click "Quit Immersion" to return to the home view
 
@@ -191,6 +201,10 @@ ElementalWarrior/
 - [x] Gaze-based aiming (head direction targeting)
 - [x] Scene reconstruction for surface collision
 - [x] Explosion effects on impact
+- [x] Scorch marks with ember glow
+- [x] Audio system (crackle, woosh, explosion)
+- [x] Persistent mesh collision (works beyond LiDAR range)
+- [x] Code refactoring for maintainability
 
 ### Phase 2: Combat System
 - [ ] AI enemy entities
@@ -207,8 +221,8 @@ ElementalWarrior/
 
 ### Phase 4: Polish & Features
 - [ ] Arena environments (fire temple, water oasis, earth cavern, air temple)
-- [ ] Particle effects and VFX
-- [ ] Sound effects and spatial audio
+- [ ] Additional particle effects and VFX
+- [x] Sound effects and spatial audio
 - [ ] Tutorial system
 - [ ] Progression and unlocks
 
@@ -219,25 +233,27 @@ VisionOS provides `ARKitSession` with multiple providers for comprehensive track
 - **HandTrackingProvider**: Tracks hand joint positions in 3D space (wrist, knuckles, fingertips)
 - **WorldTrackingProvider**: Tracks device pose for gaze direction (head-based aiming)
 - **SceneReconstructionProvider**: Detects real-world surfaces for projectile collisions
-- Detects open palm gesture by measuring finger extension (>5cm tip-to-knuckle)
-- Detects fist gesture by checking finger extension (<3.5cm threshold)
-- Calculates hand velocity from 100ms position history for punch detection
+- Multi-signal fist detection (4 methods: alignment, thumb curl, compactness, clustering)
+- Calculates hand velocity from 150ms position history for punch detection
 - Detects palm orientation by checking wrist transform Y-axis alignment with world up
 - Handles left/right hand coordinate system mirroring correctly
 - Intent-based delayed despawn system (1.5s grace period) for smoother gesture flow
+- 2-second tracking loss grace period before force extinguish
 
 ### Physics and Collision
 Current projectile system implementation:
 - Manual projectile movement at 60fps update rate (12 m/s flight speed)
-- Scene reconstruction meshes for real-world surface collision detection
-- Distance-based collision checking with 0.5m proximity threshold
+- Persistent mesh cache stores geometry even when surfaces leave LiDAR range
+- Möller–Trumbore ray-triangle intersection for precise collision detection
+- Returns hit position and surface normal for scorch mark orientation
 - Maximum projectile range: 20 meters before auto-explosion
 - Future: RealityKit physics for enemy entity collisions
 
 ### Performance Considerations
 - Use entity pooling for frequently spawned projectiles
-- Optimize particle effects for Vision Pro's rendering pipeline
-- Implement level-of-detail (LOD) for complex visual effects
+- Fireball and explosion templates preloaded once
+- Persistent mesh cache eliminates re-scanning for collision
+- Particle emitters use finite lifespans with automatic cleanup
 
 ## Contributing
 

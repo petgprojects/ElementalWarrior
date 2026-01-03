@@ -47,6 +47,7 @@ The app uses a dual-space architecture:
 - Spawns/extinguishes fireballs based on hand gestures (open palm facing up)
 - Punch detection: fist gesture + velocity threshold (0.3 m/s) to launch fireballs
 - Cross-hand punch support (punch with opposite hand)
+- **Mega fireball combining**: When both hands have fireballs and they come within 15cm, they combine into a 2x mega fireball with scaled explosions, scorch marks, and louder audio
 - Gaze-based targeting using device head direction
 - Projectile flight at 12 m/s with 20m max range
 - **Persistent mesh collision system** - scanned geometry stays in memory even when out of LiDAR range
@@ -54,7 +55,9 @@ The app uses a dual-space architecture:
 
 **GestureTypes** (Managers/GestureTypes.swift)
 - Shared data structures: `HandGestureState`, `HandState`, `ProjectileState`, `CachedMeshGeometry`
-- `GestureConstants` enum with all timing and threshold values
+- `HandState.isMegaFireball` - Tracks whether the hand is holding a combined mega fireball
+- `ProjectileState.isMegaFireball` - Tracks mega state for projectiles in flight
+- `GestureConstants` enum with all timing and threshold values including mega fireball constants (combine distance, scale multipliers, audio boost)
 
 **GestureDetection** (Managers/GestureDetection.swift)
 - Multi-signal fist detection using 4 methods:
@@ -87,11 +90,13 @@ The app uses a dual-space architecture:
 - All effects include PointLight components for environmental lighting
 
 **ExplosionEffects.swift**
-- `createExplosionEffect()` - 5-layer explosion (flash, core, flame, outer, smoke)
-- Dynamic point light with fade animation
+- `createExplosionEffect(scale:)` - 5-layer explosion (flash, core, flame, outer, smoke)
+- Scale parameter allows 2x mega explosions for combined fireballs
+- Dynamic point light with fade animation (intensity scales with explosion)
 
 **ScorchMarkEffects.swift**
-- `createScorchMark()` - Multi-layered procedural scorch marks
+- `createScorchMark(scale:)` - Multi-layered procedural scorch marks
+- Scale parameter allows larger scorch marks for mega fireballs
 - `generateIrregularSootMesh()` - Organic edge variation with sinusoidal lobes and spurs
 - `generateRadialGradientTexture()` - Burnt texture with turbulence noise
 - Animated ember glow effect with pulsing heat colors

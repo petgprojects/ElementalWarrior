@@ -35,6 +35,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Fireballs appear in open palms and track hand position
   - **Punch-to-throw**: Close fist and punch to launch fireballs toward your gaze direction
   - Cross-hand punching supported (punch opposite hand's fireball)
+  - **Mega Fireball Combining**: Bring two fireballs together (within 15cm) to combine them into a mega fireball 2x the size with larger explosions, bigger scorch marks, and louder sounds
   - Projectiles fly at 12 m/s with fire trail effects
   - Fireballs explode on impact with walls/surfaces or after 20m max range
   - Smooth spawn/extinguish animations with smoke puffs
@@ -183,9 +184,10 @@ ElementalWarrior/
 2. Click "Start" to enter the immersive arena
 3. Open your palms facing upward to spawn fireballs (works for both hands)
 4. **To throw**: Look at your target, then make a fist and punch the fireball
-5. Fireballs fly toward where you're looking and explode on impact with scorch marks
-6. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
-7. Click "Quit Immersion" to return to the home view
+5. **Mega fireball**: Spawn fireballs in both hands, then bring them together (within 15cm) to combine into a mega fireball with 2x size, bigger explosions, and louder sounds!
+6. Fireballs fly toward where you're looking and explode on impact with scorch marks
+7. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
+8. Click "Quit Immersion" to return to the home view
 
 ## Development Roadmap
 
@@ -205,6 +207,7 @@ ElementalWarrior/
 - [x] Audio system (crackle, woosh, explosion)
 - [x] Persistent mesh collision (works beyond LiDAR range)
 - [x] Code refactoring for maintainability
+- [x] Mega fireball combining (two fireballs → mega fireball with scaled effects)
 
 ### Phase 2: Combat System
 - [ ] AI enemy entities

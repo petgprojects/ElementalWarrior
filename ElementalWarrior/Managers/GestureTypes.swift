@@ -37,6 +37,11 @@ struct HandState {
 
     // Audio controller for looping sounds
     var crackleController: AudioPlaybackController?
+
+    // Mega fireball state
+    var isMegaFireball: Bool = false
+    var suppressSpawnUntilRelease: Bool = false
+    var nextSummonAllowedTime: TimeInterval = 0
 }
 
 // MARK: - Projectile State
@@ -50,6 +55,7 @@ struct ProjectileState {
     let speed: Float
     var trailEntity: Entity?
     var previousPosition: SIMD3<Float>  // Track previous position for raycast collision
+    let isMegaFireball: Bool  // Whether this is a mega fireball for scaled effects
 }
 
 // MARK: - Cached Mesh Geometry
@@ -76,4 +82,12 @@ enum GestureConstants {
     static let projectileSpeed: Float = 12.0                  // m/s flight speed
     static let maxProjectileRange: Float = 20.0               // meters before auto-explode
     static let trackingLostGraceDuration: TimeInterval = 2.0  // seconds grace period for tracking loss
+    static let crossPunchResummonDelay: TimeInterval = 0.5   // delay before resummon after cross-punch
+
+    // Mega fireball constants
+    static let fireballCombineDistance: Float = 0.15          // meters to combine fireballs
+    static let megaFireballScale: Float = 2.0                 // scale multiplier for mega fireball
+    static let megaExplosionScale: Float = 2.0                // scale multiplier for explosion
+    static let megaScorchScale: Float = 2.0                   // scale multiplier for scorch mark
+    static let megaAudioGainBoost: Double = 6.0               // dB boost for mega sounds
 }

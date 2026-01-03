@@ -708,12 +708,23 @@ final class HandTrackingManager {
         let origin = position + direction * 0.02  // bring emission closer to palm
 
         let maxRange = GestureConstants.flamethrowerRange
-        let hit = CollisionSystem.raycastBeam(
-            origin: origin,
-            direction: direction,
-            maxDistance: maxRange,
-            meshCache: persistentMeshCache
-        )
+        let now = CACurrentMediaTime()
+        var hit: CollisionSystem.HitResult? = nil
+
+        // Limit expensive mesh raycasts to reduce main-actor load
+        if now - state.lastFlamethrowerRaycastTime > GestureConstants.flamethrowerRaycastInterval {
+            hit = CollisionSystem.raycastBeam(
+                origin: origin,
+                direction: direction,
+                maxDistance: maxRange,
+                meshCache: persistentMeshCache
+            )
+            state.lastFlamethrowerRaycastTime = now
+            state.lastFlamethrowerHitDistance = hit.map { simd_distance(origin, $0.position) } ?? maxRange
+        } else {
+            // Reuse last distance to keep stream length stable between raycasts
+            hit = nil
+        }
 
         var lengthFactor: Float = 1.0
 
@@ -726,6 +737,9 @@ final class HandTrackingManager {
                 state.lastFlamethrowerScorchTime = now
                 await spawnFlamethrowerScorch(at: hit.position, normal: hit.normal)
             }
+        } else {
+            let distance = min(state.lastFlamethrowerHitDistance, maxRange)
+            lengthFactor = max(0.25, distance / maxRange)
         }
 
         var transform = flamethrower.transform
@@ -749,6 +763,8 @@ final class HandTrackingManager {
         guard state.isUsingFlamethrower || state.flamethrower != nil else { return }
 
         let flamethrowerEntity = state.flamethrower
+        state.flamethrowerDespawnTask?.cancel()
+        state.flamethrowerDespawnTask = nil
 
         if let audio = state.flamethrowerAudio {
             audio.fade(to: -80, duration: 0.5)
@@ -969,32 +985,50 @@ final class HandTrackingManager {
 
     private func handleTrackingLost(isLeft: Bool) async {
         if isLeft {
-            if leftHandState.isUsingFlamethrower {
-                await stopFlamethrower(for: .left)
-            }
-            guard leftHandState.fireball != nil else { return }
+            if leftHandState.isTrackingLost { return }
             leftHandState.isTrackingLost = true
             leftHandState.lastKnownPosition = leftHandState.fireball?.position
             leftHandState.despawnTask?.cancel()
-            leftHandState.despawnTask = Task { [weak self] in
-                guard let self = self else { return }
-                try? await Task.sleep(for: .milliseconds(Int(GestureConstants.trackingLostGraceDuration * 1000)))
-                guard !Task.isCancelled else { return }
-                await self.forceExtinguishLeft()
+            if leftHandState.fireball != nil {
+                leftHandState.despawnTask = Task { [weak self] in
+                    guard let self = self else { return }
+                    try? await Task.sleep(for: .milliseconds(Int(GestureConstants.trackingLostGraceDuration * 1000)))
+                    guard !Task.isCancelled else { return }
+                    await self.forceExtinguishLeft()
+                }
+            }
+
+            if leftHandState.isUsingFlamethrower {
+                leftHandState.flamethrowerDespawnTask?.cancel()
+                leftHandState.flamethrowerDespawnTask = Task { [weak self] in
+                    guard let self = self else { return }
+                    try? await Task.sleep(for: .milliseconds(Int(GestureConstants.flamethrowerTrackingGraceDuration * 1000)))
+                    guard !Task.isCancelled else { return }
+                    await self.stopFlamethrower(for: .left)
+                }
             }
         } else {
-            if rightHandState.isUsingFlamethrower {
-                await stopFlamethrower(for: .right)
-            }
-            guard rightHandState.fireball != nil else { return }
+            if rightHandState.isTrackingLost { return }
             rightHandState.isTrackingLost = true
             rightHandState.lastKnownPosition = rightHandState.fireball?.position
             rightHandState.despawnTask?.cancel()
-            rightHandState.despawnTask = Task { [weak self] in
-                guard let self = self else { return }
-                try? await Task.sleep(for: .milliseconds(Int(GestureConstants.trackingLostGraceDuration * 1000)))
-                guard !Task.isCancelled else { return }
-                await self.forceExtinguishRight()
+            if rightHandState.fireball != nil {
+                rightHandState.despawnTask = Task { [weak self] in
+                    guard let self = self else { return }
+                    try? await Task.sleep(for: .milliseconds(Int(GestureConstants.trackingLostGraceDuration * 1000)))
+                    guard !Task.isCancelled else { return }
+                    await self.forceExtinguishRight()
+                }
+            }
+
+            if rightHandState.isUsingFlamethrower {
+                rightHandState.flamethrowerDespawnTask?.cancel()
+                rightHandState.flamethrowerDespawnTask = Task { [weak self] in
+                    guard let self = self else { return }
+                    try? await Task.sleep(for: .milliseconds(Int(GestureConstants.flamethrowerTrackingGraceDuration * 1000)))
+                    guard !Task.isCancelled else { return }
+                    await self.stopFlamethrower(for: .right)
+                }
             }
         }
     }
@@ -1004,22 +1038,36 @@ final class HandTrackingManager {
             guard leftHandState.isTrackingLost else { return }
             leftHandState.despawnTask?.cancel()
             leftHandState.despawnTask = nil
+            leftHandState.flamethrowerDespawnTask?.cancel()
+            leftHandState.flamethrowerDespawnTask = nil
             leftHandState.isTrackingLost = false
             if let fireball = leftHandState.fireball {
                 var transform = fireball.transform
                 transform.translation = position
                 fireball.move(to: transform, relativeTo: fireball.parent, duration: 0.2, timingFunction: .easeOut)
             }
+            if let flamethrower = leftHandState.flamethrower {
+                var transform = flamethrower.transform
+                transform.translation = position
+                flamethrower.move(to: transform, relativeTo: flamethrower.parent, duration: 0.2, timingFunction: .easeOut)
+            }
             leftHandState.lastKnownPosition = nil
         } else {
             guard rightHandState.isTrackingLost else { return }
             rightHandState.despawnTask?.cancel()
             rightHandState.despawnTask = nil
+            rightHandState.flamethrowerDespawnTask?.cancel()
+            rightHandState.flamethrowerDespawnTask = nil
             rightHandState.isTrackingLost = false
             if let fireball = rightHandState.fireball {
                 var transform = fireball.transform
                 transform.translation = position
                 fireball.move(to: transform, relativeTo: fireball.parent, duration: 0.2, timingFunction: .easeOut)
+            }
+            if let flamethrower = rightHandState.flamethrower {
+                var transform = flamethrower.transform
+                transform.translation = position
+                flamethrower.move(to: transform, relativeTo: flamethrower.parent, duration: 0.2, timingFunction: .easeOut)
             }
             rightHandState.lastKnownPosition = nil
         }

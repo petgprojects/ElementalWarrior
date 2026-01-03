@@ -252,31 +252,27 @@ final class HandTrackingManager {
             return
         }
 
-        // Determine dominant hand based on velocity (which one moved more)
+        // Determine receiver based on velocity (more stationary hand receives the mega fireball)
         let leftVelocity = GestureDetection.calculateVelocity(from: leftHandState.lastPositions)
         let rightVelocity = GestureDetection.calculateVelocity(from: rightHandState.lastPositions)
         let leftSpeed = simd_length(leftVelocity)
         let rightSpeed = simd_length(rightVelocity)
 
-        // The hand that moved faster is the dominant hand (keeps the mega fireball)
-        let dominantIsLeft = leftSpeed >= rightSpeed
+        let receiverIsLeft = leftSpeed <= rightSpeed
 
-        await combineFireballs(dominantIsLeft: dominantIsLeft)
+        await combineFireballs(receiverIsLeft: receiverIsLeft)
     }
 
-    private func combineFireballs(dominantIsLeft: Bool) async {
-        let dominantState = dominantIsLeft ? leftHandState : rightHandState
-        let sacrificeState = dominantIsLeft ? rightHandState : leftHandState
-
-        guard let dominantFireball = dominantState.fireball,
-              let sacrificeFireball = sacrificeState.fireball else {
+    private func combineFireballs(receiverIsLeft: Bool) async {
+        guard let receiverFireball = receiverIsLeft ? leftHandState.fireball : rightHandState.fireball,
+              let donorFireball = receiverIsLeft ? rightHandState.fireball : leftHandState.fireball else {
             return
         }
 
-        print("Combining fireballs! Dominant hand: \(dominantIsLeft ? "LEFT" : "RIGHT")")
+        print("Combining fireballs! Receiver hand: \(receiverIsLeft ? "LEFT" : "RIGHT")")
 
         // Mark both as animating to prevent interference
-        if dominantIsLeft {
+        if receiverIsLeft {
             leftHandState.isAnimating = true
             rightHandState.isAnimating = true
         } else {
@@ -285,7 +281,7 @@ final class HandTrackingManager {
         }
 
         // Create a flash effect at the merge point
-        let mergePoint = (dominantFireball.position + sacrificeFireball.position) / 2
+        let mergePoint = (receiverFireball.position + donorFireball.position) / 2
         let flashEntity = createMergeFlash()
         flashEntity.position = mergePoint
         rootEntity.addChild(flashEntity)
@@ -296,35 +292,53 @@ final class HandTrackingManager {
             flashEntity.removeFromParent()
         }
 
-        // Fade out and remove the sacrifice fireball
-        if dominantIsLeft {
+        // Prevent immediate re-summon on the donor hand until it releases the gesture
+        if receiverIsLeft {
+            rightHandState.suppressSpawnUntilRelease = true
+        } else {
+            leftHandState.suppressSpawnUntilRelease = true
+        }
+
+        // Fade out and pull in the donor fireball
+        if receiverIsLeft {
             rightHandState.crackleController?.fade(to: -80, duration: 0.2)
         } else {
             leftHandState.crackleController?.fade(to: -80, duration: 0.2)
         }
 
-        var sacrificeTransform = sacrificeFireball.transform
-        sacrificeTransform.scale = [0.01, 0.01, 0.01]
-        sacrificeFireball.move(to: sacrificeTransform, relativeTo: sacrificeFireball.parent, duration: 0.2, timingFunction: .easeIn)
+        var donorTransform = donorFireball.transform
+        donorTransform.translation = mergePoint
+        donorTransform.scale = [0.2, 0.2, 0.2]
+        donorFireball.move(to: donorTransform, relativeTo: donorFireball.parent, duration: 0.18, timingFunction: .easeIn)
 
-        // Scale up the dominant fireball to mega size
-        var dominantTransform = dominantFireball.transform
-        dominantTransform.scale = SIMD3<Float>(repeating: GestureConstants.megaFireballScale)
-        dominantFireball.move(to: dominantTransform, relativeTo: dominantFireball.parent, duration: 0.3, timingFunction: .easeOut)
+        // Scale up the receiver fireball with a brief overshoot
+        var receiverTransform = receiverFireball.transform
+        receiverTransform.scale = SIMD3<Float>(repeating: GestureConstants.megaFireballScale * 1.15)
+        receiverFireball.move(to: receiverTransform, relativeTo: receiverFireball.parent, duration: 0.18, timingFunction: .easeOut)
 
         // Boost crackle audio for mega fireball (+3dB while holding)
-        if dominantIsLeft {
+        if receiverIsLeft {
             leftHandState.crackleController?.fade(to: 3, duration: 0.3)
         } else {
             rightHandState.crackleController?.fade(to: 3, duration: 0.3)
         }
 
-        // Wait for animations to complete
-        try? await Task.sleep(for: .milliseconds(300))
+        try? await Task.sleep(for: .milliseconds(180))
 
-        // Remove sacrifice fireball and clean up its state
-        sacrificeFireball.removeFromParent()
-        if dominantIsLeft {
+        var donorFinalTransform = donorTransform
+        donorFinalTransform.translation = receiverFireball.position
+        donorFinalTransform.scale = [0.01, 0.01, 0.01]
+        donorFireball.move(to: donorFinalTransform, relativeTo: donorFireball.parent, duration: 0.22, timingFunction: .easeIn)
+
+        receiverTransform.scale = SIMD3<Float>(repeating: GestureConstants.megaFireballScale)
+        receiverFireball.move(to: receiverTransform, relativeTo: receiverFireball.parent, duration: 0.22, timingFunction: .easeInOut)
+
+        // Wait for animations to complete
+        try? await Task.sleep(for: .milliseconds(240))
+
+        // Remove donor fireball and clean up its state
+        donorFireball.removeFromParent()
+        if receiverIsLeft {
             rightHandState.crackleController?.stop()
             rightHandState.crackleController = nil
             rightHandState.fireball = nil
@@ -344,8 +358,8 @@ final class HandTrackingManager {
             leftHandState.despawnTask = nil
         }
 
-        // Mark the dominant hand as having a mega fireball
-        if dominantIsLeft {
+        // Mark the receiver hand as having a mega fireball
+        if receiverIsLeft {
             leftHandState.isMegaFireball = true
             leftHandState.isAnimating = false
         } else {
@@ -353,7 +367,7 @@ final class HandTrackingManager {
             rightHandState.isAnimating = false
         }
 
-        print("Mega fireball created on \(dominantIsLeft ? "LEFT" : "RIGHT") hand!")
+        print("Mega fireball created on \(receiverIsLeft ? "LEFT" : "RIGHT") hand!")
     }
 
     private func createMergeFlash() -> Entity {
@@ -403,6 +417,10 @@ final class HandTrackingManager {
     private func updateLeftHand(shouldShow: Bool, position: SIMD3<Float>, fistPosition: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
         GestureDetection.updatePositionHistory(for: &leftHandState, position: fistPosition)
 
+        if leftHandState.suppressSpawnUntilRelease && !shouldShow {
+            leftHandState.suppressSpawnUntilRelease = false
+        }
+
         // Same-hand punch
         if isFist, let fireball = leftHandState.fireball,
            (leftHandState.isShowingFireball || leftHandState.isPendingDespawn) && !leftHandState.isAnimating {
@@ -436,7 +454,7 @@ final class HandTrackingManager {
         }
 
         // State transitions
-        if shouldShow && !leftHandState.isShowingFireball && !leftHandState.isAnimating {
+        if shouldShow && !leftHandState.isShowingFireball && !leftHandState.isAnimating && !leftHandState.suppressSpawnUntilRelease {
             leftHandState.despawnTask?.cancel()
             leftHandState.despawnTask = nil
             leftHandState.isPendingDespawn = false
@@ -488,6 +506,10 @@ final class HandTrackingManager {
     private func updateRightHand(shouldShow: Bool, position: SIMD3<Float>, fistPosition: SIMD3<Float>, isFist: Bool, anchor: HandAnchor) async {
         GestureDetection.updatePositionHistory(for: &rightHandState, position: fistPosition)
 
+        if rightHandState.suppressSpawnUntilRelease && !shouldShow {
+            rightHandState.suppressSpawnUntilRelease = false
+        }
+
         // Same-hand punch
         if isFist, let fireball = rightHandState.fireball,
            (rightHandState.isShowingFireball || rightHandState.isPendingDespawn) && !rightHandState.isAnimating {
@@ -521,7 +543,7 @@ final class HandTrackingManager {
         }
 
         // State transitions
-        if shouldShow && !rightHandState.isShowingFireball && !rightHandState.isAnimating {
+        if shouldShow && !rightHandState.isShowingFireball && !rightHandState.isAnimating && !rightHandState.suppressSpawnUntilRelease {
             rightHandState.despawnTask?.cancel()
             rightHandState.despawnTask = nil
             rightHandState.isPendingDespawn = false

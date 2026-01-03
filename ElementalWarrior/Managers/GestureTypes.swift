@@ -41,6 +41,7 @@ struct HandState {
     // Mega fireball state
     var isMegaFireball: Bool = false
     var suppressSpawnUntilRelease: Bool = false
+    var nextSummonAllowedTime: TimeInterval = 0
 }
 
 // MARK: - Projectile State
@@ -81,6 +82,7 @@ enum GestureConstants {
     static let projectileSpeed: Float = 12.0                  // m/s flight speed
     static let maxProjectileRange: Float = 20.0               // meters before auto-explode
     static let trackingLostGraceDuration: TimeInterval = 2.0  // seconds grace period for tracking loss
+    static let crossPunchResummonDelay: TimeInterval = 0.5   // delay before resummon after cross-punch
 
     // Mega fireball constants
     static let fireballCombineDistance: Float = 0.15          // meters to combine fireballs

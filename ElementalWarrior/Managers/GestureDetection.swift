@@ -16,6 +16,11 @@ enum GestureDetection {
 
     // MARK: - Fist Detection (Multi-Method)
 
+    static let fistAlignmentThreshold: Float = 0.75
+    static let thumbCurlDistanceThreshold: Float = 0.07
+    static let fistCompactRatioThreshold: Float = 1.4
+    static let fistClusterSpreadThreshold: Float = 0.08
+
     /// Multi-method fist detection that works even when ARKit estimates occluded joints.
     /// Uses multiple signals since ARKit predicts joint positions even when occluded.
     /// Returns debug information for fist detection.
@@ -60,8 +65,8 @@ enum GestureDetection {
 
         // METHOD 1: Finger alignment (relaxed threshold)
         let alignmentResult = checkFingerAlignment(skeleton: skeleton)
-        let alignmentPassed = alignmentResult.alignment < 0.75
-        if alignmentResult.alignment < 0.75 {
+        let alignmentPassed = alignmentResult.alignment < fistAlignmentThreshold
+        if alignmentResult.alignment < fistAlignmentThreshold {
             fistSignals += 1
             debugParts.append("align:\(String(format: "%.2f", alignmentResult.alignment))✓")
         } else {
@@ -157,7 +162,7 @@ enum GestureDetection {
         let thumbTipToWrist = simd_distance(thumbTipPos, wristPos)
         let middleKnuckleToWrist = simd_distance(middleKnucklePos, wristPos)
 
-        let isCloseToFingers = distToMiddleIntermediate < 0.07
+        let isCloseToFingers = distToMiddleIntermediate < thumbCurlDistanceThreshold
         let isFoldedIn = thumbTipToWrist < middleKnuckleToWrist
         let isCurled = isCloseToFingers || isFoldedIn
 
@@ -180,7 +185,7 @@ enum GestureDetection {
         guard knuckleToWrist > 0.001 else { return (false, 999) }
 
         let ratio = tipToWrist / knuckleToWrist
-        return (ratio < 1.4, ratio)
+        return (ratio < fistCompactRatioThreshold, ratio)
     }
 
     /// Check if fingertips are clustered together (fist) vs spread out (open)
@@ -200,7 +205,7 @@ enum GestureDetection {
         let d3 = simd_distance(middlePos, littlePos)
         let maxSpread = max(d1, max(d2, d3))
 
-        return (maxSpread < 0.08, maxSpread)
+        return (maxSpread < fistClusterSpreadThreshold, maxSpread)
     }
 
     // MARK: - Open Palm Detection

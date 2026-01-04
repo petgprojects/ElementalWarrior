@@ -66,6 +66,7 @@ final class HandTrackingManager {
     private struct FireWallState {
         let id: UUID
         var visual: FireWallVisual
+        var emberVisual: EmberLineVisual?
         var width: Float
         var height: Float
         var lineDirection: SIMD3<Float>
@@ -74,6 +75,7 @@ final class HandTrackingManager {
         var basePosition: SIMD3<Float>
         var paletteState: FireWallPaletteState
         var isCollapsing: Bool
+        var isEmberMode: Bool
         var paletteTask: Task<Void, Never>?
     }
 
@@ -1532,10 +1534,13 @@ final class HandTrackingManager {
         let high = pose.position.y + GestureConstants.wallHeightReferenceHighOffset
         let denom = max(0.05, high - low)
         let t = clamp((avgHandHeight - low) / denom, min: 0.0, max: 1.0)
-        if t <= GestureConstants.wallHeightMinSnapThreshold {
+        let minSnap = GestureConstants.wallHeightMinSnapThreshold
+        if t <= minSnap {
             return max(0.05, GestureConstants.wallEmberHeight * 0.5)
         }
-        return max(0.05, t * GestureConstants.wallMaxHeight)
+        let minWallHeight = max(0.05, GestureConstants.wallEmberHeight + 0.04)
+        let adjustedT = clamp((t - minSnap) / max(0.001, 1.0 - minSnap), min: 0.0, max: 1.0)
+        return minWallHeight + adjustedT * (GestureConstants.wallMaxHeight - minWallHeight)
     }
 
     private func checkZombiePoseHand(
@@ -1711,6 +1716,7 @@ final class HandTrackingManager {
         var wallState = FireWallState(
             id: wallID,
             visual: visual,
+            emberVisual: nil,
             width: placement.currentWidth,
             height: height,
             lineDirection: placement.lineDirection,
@@ -1719,13 +1725,10 @@ final class HandTrackingManager {
             basePosition: placement.currentCenter,
             paletteState: .editing,
             isCollapsing: false,
+            isEmberMode: false,
             paletteTask: nil
         )
-        wallState.visual.root.transform = makeBasisTransform(
-            position: wallState.basePosition,
-            lineDirection: wallState.lineDirection,
-            planeNormal: wallState.planeNormal
-        )
+        syncWallVisuals(wall: &wallState)
 
         rootEntity.addChild(wallState.visual.root)
         fireWalls[wallID] = wallState
@@ -1834,12 +1837,7 @@ final class HandTrackingManager {
         wall.width = targetWidth
         wall.height = targetHeight
 
-        wall.visual.root.transform = makeBasisTransform(
-            position: wall.basePosition,
-            lineDirection: wall.lineDirection,
-            planeNormal: wall.planeNormal
-        )
-        updateFireWallEffect(wall.visual, width: wall.width, height: wall.height)
+        syncWallVisuals(wall: &wall)
 
         fireWalls[wall.id] = wall
         var updatedEdit = edit
@@ -1860,12 +1858,6 @@ final class HandTrackingManager {
             wallEdit = nil
             await collapseWall(id: edit.wallID)
             return
-        }
-
-        if wall.height < GestureConstants.wallMinHeight {
-            wall.height = GestureConstants.wallMinHeight
-            updateFireWallEffect(wall.visual, width: wall.width, height: wall.height)
-            fireWalls[wall.id] = wall
         }
 
         wallEdit = nil
@@ -1969,6 +1961,9 @@ final class HandTrackingManager {
         stopFireWallEmission(wall.visual)
         try? await Task.sleep(for: .milliseconds(400))
         wall.visual.root.removeFromParent()
+        if let emberVisual = wall.emberVisual {
+            emberVisual.root.removeFromParent()
+        }
         fireWalls.removeValue(forKey: id)
         clearWallSelection(resetPalette: true)
         setWallPaletteTarget(id: nil, state: .idle)
@@ -2028,6 +2023,42 @@ final class HandTrackingManager {
                 }
             }
             fireWalls[wallID] = wall
+        }
+    }
+
+    private func syncWallVisuals(wall: inout FireWallState) {
+        wall.visual.root.transform = makeBasisTransform(
+            position: wall.basePosition,
+            lineDirection: wall.lineDirection,
+            planeNormal: wall.planeNormal
+        )
+
+        let shouldShowEmbers = wall.height <= GestureConstants.wallEmberHeight
+        if shouldShowEmbers {
+            if wall.emberVisual == nil {
+                let emberVisual = createEmberLineEffect(width: wall.width)
+                wall.emberVisual = emberVisual
+                rootEntity.addChild(emberVisual.root)
+            }
+            wall.visual.root.isEnabled = false
+            if let emberVisual = wall.emberVisual {
+                emberVisual.root.isEnabled = true
+                emberVisual.root.transform = makeBasisTransform(
+                    position: wall.basePosition + wall.planeNormal * GestureConstants.wallEmberOffset,
+                    lineDirection: wall.lineDirection,
+                    planeNormal: wall.planeNormal
+                )
+                updateEmberLineEffect(emberVisual, width: wall.width)
+            }
+            wall.isEmberMode = true
+        } else {
+            if wall.isEmberMode, let emberVisual = wall.emberVisual {
+                emberVisual.root.removeFromParent()
+            }
+            wall.emberVisual = nil
+            wall.visual.root.isEnabled = true
+            wall.isEmberMode = false
+            updateFireWallEffect(wall.visual, width: wall.width, height: wall.height)
         }
     }
 

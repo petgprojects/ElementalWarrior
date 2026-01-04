@@ -84,7 +84,7 @@ func createEmberLineEffect(width: Float) -> EmberLineVisual {
     let light = Entity()
     light.name = "EmberLight"
     let lightComponent = PointLightComponent(
-        color: .orange,
+        color: .cyan,
         intensity: 600,
         attenuationRadius: 1.4
     )
@@ -139,8 +139,8 @@ private func makeEmberGlowEmitter(width: Float) -> ParticleEmitterComponent {
     emitter.mainEmitter.spreadingAngle = 0.35
 
     emitter.mainEmitter.color = .evolving(
-        start: .single(FireWallColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.85)),
-        end: .single(FireWallColor(red: 0.9, green: 0.2, blue: 0.05, alpha: 0.0))
+        start: .single(FireWallColor(red: 0.45, green: 0.85, blue: 1.0, alpha: 0.85)),
+        end: .single(FireWallColor(red: 0.15, green: 0.35, blue: 1.0, alpha: 0.0))
     )
     emitter.mainEmitter.blendMode = .additive
     emitter.mainEmitter.noiseStrength = 0.1
@@ -171,8 +171,8 @@ private func makeEmberSparksEmitter(width: Float) -> ParticleEmitterComponent {
     emitter.mainEmitter.spreadingAngle = 0.6
 
     emitter.mainEmitter.color = .evolving(
-        start: .single(FireWallColor(red: 1.0, green: 0.8, blue: 0.3, alpha: 0.9)),
-        end: .single(FireWallColor(red: 0.8, green: 0.35, blue: 0.1, alpha: 0.0))
+        start: .single(FireWallColor(red: 0.7, green: 0.95, blue: 1.0, alpha: 0.9)),
+        end: .single(FireWallColor(red: 0.2, green: 0.55, blue: 1.0, alpha: 0.0))
     )
     emitter.mainEmitter.blendMode = .additive
     emitter.mainEmitter.noiseStrength = 0.08

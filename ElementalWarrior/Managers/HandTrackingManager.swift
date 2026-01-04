@@ -1532,6 +1532,9 @@ final class HandTrackingManager {
         let high = pose.position.y + GestureConstants.wallHeightReferenceHighOffset
         let denom = max(0.05, high - low)
         let t = clamp((avgHandHeight - low) / denom, min: 0.0, max: 1.0)
+        if t <= GestureConstants.wallHeightMinSnapThreshold {
+            return max(0.05, GestureConstants.wallEmberHeight * 0.5)
+        }
         return max(0.05, t * GestureConstants.wallMaxHeight)
     }
 

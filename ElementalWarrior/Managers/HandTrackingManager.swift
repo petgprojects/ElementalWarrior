@@ -304,11 +304,13 @@ final class HandTrackingManager {
             await checkFlamethrowerCombine()
 
             // Check for zombie pose (fire wall gesture) - requires both hands
+            // Pass isActiveMode=true when already editing a wall for more relaxed thresholds
             let deviceTransformForZombie = worldTracking.queryDeviceAnchor(atTimestamp: CACurrentMediaTime())?.originFromAnchorTransform
             let zombieResult = GestureDetection.checkZombiePose(
                 leftAnchor: latestLeftAnchor,
                 rightAnchor: latestRightAnchor,
-                deviceTransform: deviceTransformForZombie
+                deviceTransform: deviceTransformForZombie,
+                isActiveMode: editingWallState.isActive
             )
 
             if zombieResult.isZombiePose, let leftPos = zombieResult.leftPosition, let rightPos = zombieResult.rightPosition {
@@ -320,12 +322,9 @@ final class HandTrackingManager {
                 )
                 await updateGazeSelection(deviceTransform: deviceTransformForZombie)
 
-                // Update debug state
-                if isLeft {
-                    leftHandGestureState = .fireWall
-                } else {
-                    rightHandGestureState = .fireWall
-                }
+                // Update debug state for both hands when in zombie pose
+                leftHandGestureState = .fireWall
+                rightHandGestureState = .fireWall
             } else if editingWallState.isActive {
                 await cancelFireWallEditing()
             }

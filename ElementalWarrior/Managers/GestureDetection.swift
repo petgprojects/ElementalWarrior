@@ -255,14 +255,23 @@ enum GestureDetection {
 
     // MARK: - Zombie Pose Detection (Fire Wall)
 
-    /// Check if palm is facing downward (for zombie pose)
-    /// Uses back-of-hand visibility as a more relaxed check than strict palm normal
-    static func checkPalmFacingDown(anchor: HandAnchor, skeleton: HandSkeleton) -> Bool {
+    /// Check if the back of hand is facing upward (visible from above)
+    /// This is more intuitive than checking "palm down" - we want to see the back of the hand
+    static func checkBackOfHandVisible(anchor: HandAnchor, skeleton: HandSkeleton, isActiveMode: Bool) -> Bool {
         guard let palmNormal = getPalmNormal(anchor: anchor, skeleton: skeleton) else { return false }
+
+        // Palm normal points OUT from palm. Back of hand faces opposite direction.
+        // So if palm normal points DOWN (negative Y), back of hand faces UP.
+        // We check: is the palm normal pointing downward enough?
         let worldDown = SIMD3<Float>(0, -1, 0)
         let dotProduct = simd_dot(simd_normalize(palmNormal), worldDown)
-        // Relaxed threshold: back of hand visible means palm is facing down-ish
-        return dotProduct > GestureConstants.zombiePalmDownDotThreshold
+
+        // Use more relaxed threshold when already in active fire wall mode
+        let threshold = isActiveMode
+            ? GestureConstants.zombieBackOfHandUpThresholdActive
+            : GestureConstants.zombieBackOfHandUpThreshold
+
+        return dotProduct > threshold
     }
 
     /// Relaxed hand-not-fist check for zombie pose - doesn't require all fingers to be perfectly visible
@@ -294,14 +303,15 @@ enum GestureDetection {
         return fistSignals < 2
     }
 
-    /// Check if arm is extended forward from chest
-    static func checkArmExtended(
+    /// Check if arm is extended forward from chest (relaxed check)
+    static func checkArmExtendedForward(
         handPosition: SIMD3<Float>,
-        deviceTransform: simd_float4x4?
+        deviceTransform: simd_float4x4?,
+        isActiveMode: Bool
     ) -> Bool {
         guard let deviceTransform = deviceTransform else { return false }
 
-        // Estimate chest position (below and slightly behind head)
+        // Estimate chest position (below head)
         let headPosition = extractPosition(from: deviceTransform)
         let chestPosition = headPosition - SIMD3<Float>(0, 0.3, 0)
 
@@ -316,19 +326,28 @@ enum GestureDetection {
         let toHand = handPosition - chestPosition
         let forwardDistance = simd_dot(toHand, forward)
 
-        return forwardDistance > GestureConstants.zombieArmExtensionMinDistance
+        // Use more relaxed threshold when already in active fire wall mode
+        let threshold = isActiveMode
+            ? GestureConstants.zombieArmExtensionMinDistanceActive
+            : GestureConstants.zombieArmExtensionMinDistance
+
+        return forwardDistance > threshold
     }
 
-    /// Check if both hands are in zombie pose (arms extended, palms down, NOT making fists)
-    /// Returns tuple with pose status, hand positions, and calculated height percentage
-    /// Uses relaxed detection that only requires:
-    /// 1. Both arms extended forward
-    /// 2. Back of palms visible (palms facing down-ish)
-    /// 3. Hands not clenched into fists
+    /// Check if both hands are in zombie pose for fire wall creation/editing
+    /// Uses VERY relaxed detection that prioritizes comfort:
+    /// 1. Both hands tracked
+    /// 2. Backs of hands somewhat visible (facing up-ish)
+    /// 3. Hands not clenched into tight fists
+    /// 4. Arms extended somewhat forward
+    ///
+    /// When `isActiveMode` is true (already editing a fire wall), thresholds are even more relaxed
+    /// to allow natural arm movements for controlling wall parameters.
     static func checkZombiePose(
         leftAnchor: HandAnchor?,
         rightAnchor: HandAnchor?,
-        deviceTransform: simd_float4x4?
+        deviceTransform: simd_float4x4?,
+        isActiveMode: Bool = false
     ) -> (isZombiePose: Bool, leftPosition: SIMD3<Float>?, rightPosition: SIMD3<Float>?, heightPercent: Float) {
         guard let leftAnchor = leftAnchor,
               let rightAnchor = rightAnchor,
@@ -339,25 +358,31 @@ enum GestureDetection {
             return (false, nil, nil, 0)
         }
 
-        // Check both palms facing down (back of hands visible)
-        guard checkPalmFacingDown(anchor: leftAnchor, skeleton: leftSkeleton),
-              checkPalmFacingDown(anchor: rightAnchor, skeleton: rightSkeleton) else {
-            return (false, nil, nil, 0)
-        }
-
-        // Check both hands are NOT fists (relaxed open-hand check)
-        guard checkHandNotFist(skeleton: leftSkeleton),
-              checkHandNotFist(skeleton: rightSkeleton) else {
-            return (false, nil, nil, 0)
-        }
-
-        // Get hand positions (use wrist position for more stable tracking with palms down)
+        // Get hand positions first (use wrist for stability)
         let leftPos = getWristPosition(anchor: leftAnchor, skeleton: leftSkeleton)
         let rightPos = getWristPosition(anchor: rightAnchor, skeleton: rightSkeleton)
 
-        // Check arms are extended forward
-        guard checkArmExtended(handPosition: leftPos, deviceTransform: deviceTransform),
-              checkArmExtended(handPosition: rightPos, deviceTransform: deviceTransform) else {
+        // Check 1: Back of hands visible (palms facing down-ish)
+        let leftBackVisible = checkBackOfHandVisible(anchor: leftAnchor, skeleton: leftSkeleton, isActiveMode: isActiveMode)
+        let rightBackVisible = checkBackOfHandVisible(anchor: rightAnchor, skeleton: rightSkeleton, isActiveMode: isActiveMode)
+
+        if !leftBackVisible || !rightBackVisible {
+            return (false, nil, nil, 0)
+        }
+
+        // Check 2: Hands are not fists
+        let leftNotFist = checkHandNotFist(skeleton: leftSkeleton)
+        let rightNotFist = checkHandNotFist(skeleton: rightSkeleton)
+
+        if !leftNotFist || !rightNotFist {
+            return (false, nil, nil, 0)
+        }
+
+        // Check 3: Arms extended forward (very relaxed, mostly just "not behind you")
+        let leftExtended = checkArmExtendedForward(handPosition: leftPos, deviceTransform: deviceTransform, isActiveMode: isActiveMode)
+        let rightExtended = checkArmExtendedForward(handPosition: rightPos, deviceTransform: deviceTransform, isActiveMode: isActiveMode)
+
+        if !leftExtended || !rightExtended {
             return (false, nil, nil, 0)
         }
 

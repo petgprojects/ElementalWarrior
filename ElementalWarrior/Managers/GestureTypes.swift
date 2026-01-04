@@ -170,11 +170,14 @@ enum GestureConstants {
     static let fireWallMaxCount: Int = 3                      // maximum confirmed walls
     static let fireWallSpawnDistance: Float = 2.0             // meters in front of user for gaze spawn
 
-    // Zombie pose thresholds
-    static let zombiePalmDownDotThreshold: Float = 0.5        // palm normal alignment with world down
-    static let zombieArmExtensionMinDistance: Float = 0.35    // meters forward from chest
-    static let zombieHandHeightChestOffset: Float = -0.30     // meters below head for min height (chest)
-    static let zombieHandHeightEyeOffset: Float = 0.0         // meters relative to head for max height (eye)
+    // Zombie pose thresholds - RELAXED for comfortable gesture
+    // Detection checks that backs of hands are visible (facing up-ish) rather than strict palm-down
+    static let zombieBackOfHandUpThreshold: Float = 0.15      // back of hand facing upward (very relaxed)
+    static let zombieBackOfHandUpThresholdActive: Float = -0.1 // even more relaxed when already active
+    static let zombieArmExtensionMinDistance: Float = 0.15    // meters forward from chest (relaxed)
+    static let zombieArmExtensionMinDistanceActive: Float = 0.05 // even closer when already active
+    static let zombieHandHeightChestOffset: Float = -0.50     // meters below head for min height (lower chest)
+    static let zombieHandHeightEyeOffset: Float = 0.15        // meters above head for max height (above eyes)
 
     // Fire wall rotation control
     static let fireWallMaxRotation: Float = Float.pi / 2      // +/- 90 degrees max rotation

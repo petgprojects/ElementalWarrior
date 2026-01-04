@@ -26,7 +26,7 @@ Elemental Warrior is a visionOS immersive experience built with SwiftUI + Realit
   - Gesture recognition algorithms:
     - Palm-up + open-hand detection for spawning/holding.
     - Multi-signal fist detection (4 signals) plus velocity-based punch detection support.
-    - Zombie pose detection for fire walls (arms extended, palms down, not-fist check using inverse fist signals).
+    - Zombie pose detection for fire walls with hysteresis (relaxed initial detection, even more relaxed when already active). Checks: back of hand visible, not-fist, arms somewhat forward.
     - Position history utilities for velocity calculation.
 - `CollisionSystem.swift`
   - Projectile collision via custom ray-triangle intersection (Möller–Trumbore) against `CachedMeshGeometry` to support collisions even when ARKit removes mesh anchors.

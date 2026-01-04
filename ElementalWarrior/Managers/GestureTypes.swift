@@ -86,66 +86,66 @@ struct CachedMeshGeometry {
 
 /// Central configuration for timing and threshold constants
 enum GestureConstants {
-    static let despawnDelayDuration: TimeInterval = 1.5       // Time before despawn after gesture ends
-    static let punchVelocityThreshold: Float = 0.3            // m/s minimum for punch detection
-    static let punchProximityThreshold: Float = 0.20          // meters - max distance from fireball center
-    static let fistExtensionThreshold: Float = 0.045          // meters - finger extension for closed fist
-    static let velocityHistoryDuration: TimeInterval = 0.15   // seconds of position history to keep
-    static let projectileSpeed: Float = 12.0                  // m/s flight speed
-    static let maxProjectileRange: Float = 20.0               // meters before auto-explode
-    static let trackingLostGraceDuration: TimeInterval = 2.0  // seconds grace period for tracking loss
-    static let crossPunchResummonDelay: TimeInterval = 0.5   // delay before resummon after cross-punch
+    static var despawnDelayDuration: TimeInterval = 1.5       // Time before despawn after gesture ends
+    static var punchVelocityThreshold: Float = 0.3            // m/s minimum for punch detection
+    static var punchProximityThreshold: Float = 0.20          // meters - max distance from fireball center
+    static var fistExtensionThreshold: Float = 0.045          // meters - finger extension for closed fist
+    static var velocityHistoryDuration: TimeInterval = 0.15   // seconds of position history to keep
+    static var projectileSpeed: Float = 12.0                  // m/s flight speed
+    static var maxProjectileRange: Float = 20.0               // meters before auto-explode
+    static var trackingLostGraceDuration: TimeInterval = 2.0  // seconds grace period for tracking loss
+    static var crossPunchResummonDelay: TimeInterval = 0.5   // delay before resummon after cross-punch
 
     // Mega fireball constants
-    static let fireballCombineDistance: Float = 0.15          // meters to combine fireballs
-    static let megaFireballScale: Float = 2.0                 // scale multiplier for mega fireball
-    static let megaExplosionScale: Float = 2.0                // scale multiplier for explosion
-    static let megaScorchScale: Float = 2.0                   // scale multiplier for scorch mark
-    static let megaAudioGainBoost: Double = 6.0               // dB boost for mega sounds
+    static var fireballCombineDistance: Float = 0.15          // meters to combine fireballs
+    static var megaFireballScale: Float = 2.0                 // scale multiplier for mega fireball
+    static var megaExplosionScale: Float = 2.0                // scale multiplier for explosion
+    static var megaScorchScale: Float = 2.0                   // scale multiplier for scorch mark
+    static var megaAudioGainBoost: Double = 6.0               // dB boost for mega sounds
 
     // Flamethrower constants
-    static let flamethrowerRange: Float = 8.0                 // meters max flame reach
-    static let flamethrowerForwardDotThreshold: Float = 0.28  // palm alignment with gaze (lower = more forgiving)
-    static let flamethrowerUpRejectThreshold: Float = 0.6     // allow more tilt before rejecting
-    static let flamethrowerScorchCooldown: TimeInterval = 0.35 // seconds between scorch spawns
-    static let flamethrowerScorchScale: Float = 0.55          // default scorch size for flame hits
-    static let flamethrowerScorchLifetime: TimeInterval = 6.0 // seconds before scorch fades
-    static let flamethrowerRaycastInterval: TimeInterval = 0.04 // seconds between beam raycasts (per hand)
-    static let flamethrowerTrackingGraceDuration: TimeInterval = 0.5 // seconds before despawn after tracking loss
+    static var flamethrowerRange: Float = 8.0                 // meters max flame reach
+    static var flamethrowerForwardDotThreshold: Float = 0.28  // palm alignment with gaze (lower = more forgiving)
+    static var flamethrowerUpRejectThreshold: Float = 0.6     // allow more tilt before rejecting
+    static var flamethrowerScorchCooldown: TimeInterval = 0.35 // seconds between scorch spawns
+    static var flamethrowerScorchScale: Float = 0.55          // default scorch size for flame hits
+    static var flamethrowerScorchLifetime: TimeInterval = 6.0 // seconds before scorch fades
+    static var flamethrowerRaycastInterval: TimeInterval = 0.04 // seconds between beam raycasts (per hand)
+    static var flamethrowerTrackingGraceDuration: TimeInterval = 0.5 // seconds before despawn after tracking loss
 
     // Combined flamethrower constants
-    static let flamethrowerCombineDistance: Float = 0.15      // meters to combine flamethrowers (same as fireballs)
-    static let flamethrowerSplitDistance: Float = 0.25        // meters to split combined flamethrower (larger for hysteresis)
-    static let combinedFlamethrowerJetIntensity: Float = 1.5  // jet intensity multiplier when combined
-    static let combinedFlamethrowerMuzzleScale: Float = 1.0   // full-size muzzle when combined (vs 0.5 for single)
-    static let combinedFlamethrowerAudioBoost: Double = 3.0   // dB boost for combined flamethrower sound
+    static var flamethrowerCombineDistance: Float = 0.15      // meters to combine flamethrowers (same as fireballs)
+    static var flamethrowerSplitDistance: Float = 0.25        // meters to split combined flamethrower (larger for hysteresis)
+    static var combinedFlamethrowerJetIntensity: Float = 1.5  // jet intensity multiplier when combined
+    static var combinedFlamethrowerMuzzleScale: Float = 1.0   // full-size muzzle when combined (vs 0.5 for single)
+    static var combinedFlamethrowerAudioBoost: Double = 3.0   // dB boost for combined flamethrower sound
 
     // Wall of fire constants
-    static let zombiePosePalmDownDotThreshold: Float = -0.2   // palm normal dot with world up for palms-down
-    static let zombiePoseMinForwardDistance: Float = 0.12     // meters in front of head for zombie pose
-    static let zombiePoseMinDownAngleDegrees: Float = 45.0    // degrees from world-down to require arms extended
-    static let zombiePoseUpdateWindow: TimeInterval = 0.25    // seconds between both hand updates
-    static let wallControlGraceDuration: TimeInterval = 0.25  // seconds of grace for pose flicker
-    static let wallConfirmHoldDuration: TimeInterval = 0.12   // seconds of both fists to confirm/cancel
-    static let wallPlacementMinWidth: Float = 0.4             // meters minimum wall width
-    static let wallPlacementMaxWidth: Float = 3.5             // meters maximum wall width
-    static let wallPlacementSmoothing: Float = 0.25           // smoothing factor for ember line updates
-    static let wallPlacementMoveScale: Float = 3.5            // scaling factor for ember line translation
-    static let wallPlacementWidthScale: Float = 3.0           // scaling factor for ember line width
-    static let wallPlacementRotationScale: Float = 2.0        // radians per meter for wall rotation
-    static let wallPlacementRotationMaxRadians: Float = 1.2   // max rotation in either direction
-    static let wallEmberOffset: Float = 0.01                  // meters above ground for embers
-    static let wallPlacementMaxDistance: Float = 6.0          // meters for gaze placement raycast
-    static let wallRaiseStartThreshold: Float = 0.12          // meters above base to start wall growth
-    static let wallHeightScale: Float = 7.0                   // meters of wall per meter of hand raise
-    static let wallMinHeight: Float = 0.4                     // meters minimum wall height
-    static let wallEmberHeight: Float = 0.12                  // meters considered ember height for despawn
-    static let wallMaxHeight: Float = 3.2                     // meters maximum wall height
-    static let wallHeightReferenceLowOffset: Float = -0.25    // meters below device position for 0% height
-    static let wallHeightReferenceHighOffset: Float = 0.08    // meters above device position for 100% height
-    static let wallHeightMinSnapThreshold: Float = 0.2        // normalized range to snap to minimum height
-    static let wallFinalizeDropThreshold: Float = 0.1         // meters below base to lock wall height
-    static let wallRemovalDropThreshold: Float = 0.12         // meters below base to drop wall
-    static let wallSelectionMaxDistance: Float = 6.0          // meters max gaze selection distance
-    static let wallSelectionHoldDuration: TimeInterval = 0.5  // seconds to gaze before selection highlight
+    static var zombiePosePalmDownDotThreshold: Float = -0.2   // palm normal dot with world up for palms-down
+    static var zombiePoseMinForwardDistance: Float = 0.12     // meters in front of head for zombie pose
+    static var zombiePoseMinDownAngleDegrees: Float = 45.0    // degrees from world-down to require arms extended
+    static var zombiePoseUpdateWindow: TimeInterval = 0.25    // seconds between both hand updates
+    static var wallControlGraceDuration: TimeInterval = 0.25  // seconds of grace for pose flicker
+    static var wallConfirmHoldDuration: TimeInterval = 0.12   // seconds of both fists to confirm/cancel
+    static var wallPlacementMinWidth: Float = 0.4             // meters minimum wall width
+    static var wallPlacementMaxWidth: Float = 3.5             // meters maximum wall width
+    static var wallPlacementSmoothing: Float = 0.25           // smoothing factor for ember line updates
+    static var wallPlacementMoveScale: Float = 3.5            // scaling factor for ember line translation
+    static var wallPlacementWidthScale: Float = 3.0           // scaling factor for ember line width
+    static var wallPlacementRotationScale: Float = 2.0        // radians per meter for wall rotation
+    static var wallPlacementRotationMaxRadians: Float = 1.2   // max rotation in either direction
+    static var wallEmberOffset: Float = 0.01                  // meters above ground for embers
+    static var wallPlacementMaxDistance: Float = 6.0          // meters for gaze placement raycast
+    static var wallRaiseStartThreshold: Float = 0.12          // meters above base to start wall growth
+    static var wallHeightScale: Float = 7.0                   // meters of wall per meter of hand raise
+    static var wallMinHeight: Float = 0.4                     // meters minimum wall height
+    static var wallEmberHeight: Float = 0.12                  // meters considered ember height for despawn
+    static var wallMaxHeight: Float = 3.2                     // meters maximum wall height
+    static var wallHeightReferenceLowOffset: Float = -0.25    // meters below device position for 0% height
+    static var wallHeightReferenceHighOffset: Float = 0.08    // meters above device position for 100% height
+    static var wallHeightMinSnapThreshold: Float = 0.2        // normalized range to snap to minimum height
+    static var wallFinalizeDropThreshold: Float = 0.1         // meters below base to lock wall height
+    static var wallRemovalDropThreshold: Float = 0.12         // meters below base to drop wall
+    static var wallSelectionMaxDistance: Float = 6.0          // meters max gaze selection distance
+    static var wallSelectionHoldDuration: TimeInterval = 0.5  // seconds to gaze before selection highlight
 }

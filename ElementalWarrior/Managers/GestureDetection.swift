@@ -256,11 +256,42 @@ enum GestureDetection {
     // MARK: - Zombie Pose Detection (Fire Wall)
 
     /// Check if palm is facing downward (for zombie pose)
+    /// Uses back-of-hand visibility as a more relaxed check than strict palm normal
     static func checkPalmFacingDown(anchor: HandAnchor, skeleton: HandSkeleton) -> Bool {
         guard let palmNormal = getPalmNormal(anchor: anchor, skeleton: skeleton) else { return false }
         let worldDown = SIMD3<Float>(0, -1, 0)
         let dotProduct = simd_dot(simd_normalize(palmNormal), worldDown)
+        // Relaxed threshold: back of hand visible means palm is facing down-ish
         return dotProduct > GestureConstants.zombiePalmDownDotThreshold
+    }
+
+    /// Relaxed hand-not-fist check for zombie pose - doesn't require all fingers to be perfectly visible
+    /// Only checks that the hand is NOT making a tight fist (inverse of fist detection)
+    static func checkHandNotFist(skeleton: HandSkeleton) -> Bool {
+        // Use 2 of the 4 fist signals - if fewer than 2 fist signals, consider it "not a fist"
+        var fistSignals = 0
+
+        // METHOD 1: Fingertip clustering - in a fist, all fingertips are close together
+        let clusterResult = checkFingertipClustering(skeleton: skeleton)
+        if clusterResult.isClustered {
+            fistSignals += 1
+        }
+
+        // METHOD 2: Hand compactness - fist is more compact than open hand
+        let compactResult = checkHandCompactness(skeleton: skeleton)
+        if compactResult.isCompact {
+            fistSignals += 1
+        }
+
+        // METHOD 3: Thumb curl - thumb crosses in front when making fist
+        let thumbResult = checkThumbCurl(skeleton: skeleton)
+        if thumbResult.isCurled {
+            fistSignals += 1
+        }
+
+        // If 2 or more fist signals, it's likely a fist, so return false
+        // Otherwise, the hand is open enough for zombie pose
+        return fistSignals < 2
     }
 
     /// Check if arm is extended forward from chest
@@ -288,8 +319,12 @@ enum GestureDetection {
         return forwardDistance > GestureConstants.zombieArmExtensionMinDistance
     }
 
-    /// Check if both hands are in zombie pose (arms extended, palms down, hands open)
+    /// Check if both hands are in zombie pose (arms extended, palms down, NOT making fists)
     /// Returns tuple with pose status, hand positions, and calculated height percentage
+    /// Uses relaxed detection that only requires:
+    /// 1. Both arms extended forward
+    /// 2. Back of palms visible (palms facing down-ish)
+    /// 3. Hands not clenched into fists
     static func checkZombiePose(
         leftAnchor: HandAnchor?,
         rightAnchor: HandAnchor?,
@@ -304,21 +339,21 @@ enum GestureDetection {
             return (false, nil, nil, 0)
         }
 
-        // Check both palms facing down
+        // Check both palms facing down (back of hands visible)
         guard checkPalmFacingDown(anchor: leftAnchor, skeleton: leftSkeleton),
               checkPalmFacingDown(anchor: rightAnchor, skeleton: rightSkeleton) else {
             return (false, nil, nil, 0)
         }
 
-        // Check both hands are open
-        guard checkHandIsOpen(skeleton: leftSkeleton),
-              checkHandIsOpen(skeleton: rightSkeleton) else {
+        // Check both hands are NOT fists (relaxed open-hand check)
+        guard checkHandNotFist(skeleton: leftSkeleton),
+              checkHandNotFist(skeleton: rightSkeleton) else {
             return (false, nil, nil, 0)
         }
 
-        // Get hand positions
-        let leftPos = getPalmPosition(anchor: leftAnchor, skeleton: leftSkeleton)
-        let rightPos = getPalmPosition(anchor: rightAnchor, skeleton: rightSkeleton)
+        // Get hand positions (use wrist position for more stable tracking with palms down)
+        let leftPos = getWristPosition(anchor: leftAnchor, skeleton: leftSkeleton)
+        let rightPos = getWristPosition(anchor: rightAnchor, skeleton: rightSkeleton)
 
         // Check arms are extended forward
         guard checkArmExtended(handPosition: leftPos, deviceTransform: deviceTransform),
@@ -334,6 +369,17 @@ enum GestureDetection {
         )
 
         return (true, leftPos, rightPos, heightPercent)
+    }
+
+    /// Get wrist position for zombie pose (more stable than palm position when palms are down)
+    static func getWristPosition(anchor: HandAnchor, skeleton: HandSkeleton) -> SIMD3<Float> {
+        let wrist = skeleton.joint(.wrist)
+        guard wrist.isTracked else {
+            return extractPosition(from: anchor.originFromAnchorTransform)
+        }
+
+        let jointTransform = anchor.originFromAnchorTransform * wrist.anchorFromJointTransform
+        return extractPosition(from: jointTransform)
     }
 
     /// Calculate wall height percentage from hand elevation (chest=0%, eye=100%)

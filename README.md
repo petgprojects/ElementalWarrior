@@ -42,8 +42,9 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Dynamic point lighting from fireballs
   - **Flamethrower Mode**: Open hand in "stop" gesture (palm facing away, fingers up) to shoot a continuous flame stream from your palm
   - **Combined Flamethrower**: When using flamethrowers with both hands, bring hands together (within 15cm) to merge into a single powerful combined stream with enhanced visuals and audio; separating hands splits back into individual streams
-  - **Fire Wall Mode**: "Zombie pose" gesture (both arms extended forward, palms down, hands open) creates defensive fire walls
-    - Walls spawn as blue embers at your gaze position on the floor
+  - **Fire Wall Mode**: Extend both arms forward with backs of hands visible (palms down, relaxed hands not fists) to create defensive fire walls
+    - Walls spawn at your gaze position on the actual scanned floor (uses LiDAR mesh for accurate floor detection)
+    - Relaxed gesture detection: only requires arms extended, palms facing down, and hands not clenched into fists
     - **Height**: Raise/lower arms (chest level = embers only, eye level = full 2.5m wall)
     - **Width**: Spread hands apart (20cm to 4m)
     - **Rotation**: Move one hand forward to rotate wall (left forward = counter-clockwise, right forward = clockwise, ±90°)

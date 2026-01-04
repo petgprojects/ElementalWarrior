@@ -121,8 +121,8 @@ private func createEmberLine(width: Float, colors: FireWallColors) -> Entity {
     emitter.emitterShape = .box
     emitter.emitterShapeSize = [width, 0.02, 0.05]
     emitter.birthLocation = .volume
-    emitter.birthDirection = .local
-    emitter.emissionDirection = [0, 1, 0]  // Emit upward
+    emitter.birthDirection = .world  // Use world space for consistent upward emission
+    emitter.emissionDirection = [0, 1, 0]  // Emit upward in world space
 
     emitter.mainEmitter.birthRate = 120 * width
     emitter.mainEmitter.lifeSpan = 0.9
@@ -164,7 +164,7 @@ private func createFlameBase(width: Float, height: Float, colors: FireWallColors
     emitter.emitterShape = .box
     emitter.emitterShapeSize = [width, 0.06, 0.08]
     emitter.birthLocation = .volume
-    emitter.birthDirection = .local
+    emitter.birthDirection = .world  // Use world space for consistent upward emission
     emitter.emissionDirection = [0, 1, 0]
 
     // Scale birth rate with width, and adjust lifespan/speed with height
@@ -209,7 +209,7 @@ private func createFlameBody(width: Float, height: Float, colors: FireWallColors
     emitter.emitterShape = .box
     emitter.emitterShapeSize = [width * 0.9, 0.05, 0.06]
     emitter.birthLocation = .volume
-    emitter.birthDirection = .local
+    emitter.birthDirection = .world  // Use world space for consistent upward emission
     emitter.emissionDirection = [0, 1, 0]
 
     let heightFactor = max(0.3, height / GestureConstants.fireWallMaxHeight)
@@ -253,7 +253,7 @@ private func createFlameTips(width: Float, height: Float, colors: FireWallColors
     emitter.emitterShape = .box
     emitter.emitterShapeSize = [width * 0.75, 0.04, 0.05]
     emitter.birthLocation = .volume
-    emitter.birthDirection = .local
+    emitter.birthDirection = .world  // Use world space for consistent upward emission
     emitter.emissionDirection = [0, 1, 0]
 
     let heightFactor = max(0.3, height / GestureConstants.fireWallMaxHeight)
@@ -297,7 +297,7 @@ private func createWallSmoke(width: Float, height: Float) -> Entity {
     emitter.emitterShape = .box
     emitter.emitterShapeSize = [width * 0.6, 0.1, 0.1]
     emitter.birthLocation = .volume
-    emitter.birthDirection = .local
+    emitter.birthDirection = .world  // Use world space for consistent upward emission
     emitter.emissionDirection = [0, 1, 0]
 
     emitter.mainEmitter.birthRate = 35 * width

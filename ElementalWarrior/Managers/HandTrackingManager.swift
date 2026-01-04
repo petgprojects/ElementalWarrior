@@ -1951,11 +1951,12 @@ final class HandTrackingManager {
             colorState: .blue
         )
 
-        // Position on floor
-        var floorPosition = gazePosition
-        floorPosition.y = 0
+        // Use gaze position directly - floor Y is already estimated in calculateGazeFloorPosition
+        let floorPosition = gazePosition
 
         wallEntity.position = floorPosition
+
+        print("Fire wall spawn position: \(floorPosition)")
 
         // Rotate perpendicular to gaze, then apply user rotation
         if let deviceTransform = deviceTransform {
@@ -2394,7 +2395,8 @@ final class HandTrackingManager {
         editingWallState = FireWallEditingState()
     }
 
-    /// Calculate floor position from gaze direction
+    /// Calculate floor position from gaze direction using actual scanned mesh
+    /// Raycasts against the persistent mesh cache to find the real floor surface
     private func calculateGazeFloorPosition(deviceTransform: simd_float4x4?) -> SIMD3<Float> {
         guard let deviceTransform = deviceTransform else {
             return SIMD3<Float>(0, 0, -GestureConstants.fireWallSpawnDistance)
@@ -2407,18 +2409,56 @@ final class HandTrackingManager {
             -deviceTransform.columns.2.z
         )
 
-        // Raycast to floor (y = 0)
-        if gazeDir.y < -0.01 {  // Looking somewhat downward
-            let t = -headPos.y / gazeDir.y
-            if t > 0 && t < 20 {  // Within reasonable range
-                return headPos + gazeDir * t
+        // First, try raycasting against the actual scanned mesh
+        if let meshHit = CollisionSystem.raycastBeam(
+            origin: headPos,
+            direction: gazeDir,
+            maxDistance: 15.0,  // Max distance to look for floor
+            meshCache: persistentMeshCache
+        ) {
+            // Check if the hit surface is roughly horizontal (floor-like)
+            // A floor should have a normal pointing mostly upward (y > 0.7)
+            if meshHit.normal.y > 0.5 {
+                print("Fire wall spawn: using mesh floor at \(meshHit.position)")
+                return meshHit.position
             }
         }
 
-        // Default: spawn at fixed distance in front on the floor
+        // If gaze doesn't hit the mesh directly, try raycasting downward from gaze point
+        // This handles cases where user is looking at a wall but wants wall on the floor below
         let horizontalGaze = simd_normalize(SIMD3<Float>(gazeDir.x, 0, gazeDir.z))
+        let gazePointAhead = headPos + horizontalGaze * GestureConstants.fireWallSpawnDistance
+
+        // Raycast straight down from that point to find the floor
+        if let floorHit = CollisionSystem.raycastBeam(
+            origin: gazePointAhead + SIMD3<Float>(0, 2, 0),  // Start above to ensure we hit floor below
+            direction: SIMD3<Float>(0, -1, 0),  // Straight down
+            maxDistance: 5.0,
+            meshCache: persistentMeshCache
+        ) {
+            if floorHit.normal.y > 0.5 {
+                print("Fire wall spawn: using downward raycast floor at \(floorHit.position)")
+                return floorHit.position
+            }
+        }
+
+        // Fallback: estimate floor level if no mesh is available yet
+        // This happens when the room hasn't been fully scanned
+        let estimatedFloorY = headPos.y - 1.5
+        print("Fire wall spawn: no mesh found, using estimated floor at y=\(estimatedFloorY)")
+
+        if gazeDir.y < -0.01 {  // Looking somewhat downward
+            let t = (estimatedFloorY - headPos.y) / gazeDir.y
+            if t > 0 && t < 20 {
+                var hitPoint = headPos + gazeDir * t
+                hitPoint.y = estimatedFloorY
+                return hitPoint
+            }
+        }
+
+        // Default: spawn at fixed distance in front on the estimated floor
         var spawnPos = headPos + horizontalGaze * GestureConstants.fireWallSpawnDistance
-        spawnPos.y = 0
+        spawnPos.y = estimatedFloorY
         return spawnPos
     }
 }

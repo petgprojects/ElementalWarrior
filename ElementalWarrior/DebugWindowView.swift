@@ -50,11 +50,11 @@ private struct HandDebugView: View {
             HStack(alignment: .top, spacing: 24) {
                 debugCard(title: "LEFT HAND",
                           state: appModel.handTrackingManager.leftHandGestureState,
-                          info: appModel.handTrackingManager.leftDebugInfo)
+                          rows: appModel.handTrackingManager.leftHandDebugRows)
 
                 debugCard(title: "RIGHT HAND",
                           state: appModel.handTrackingManager.rightHandGestureState,
-                          info: appModel.handTrackingManager.rightDebugInfo)
+                          rows: appModel.handTrackingManager.rightHandDebugRows)
             }
 
             Spacer()
@@ -63,7 +63,7 @@ private struct HandDebugView: View {
         .navigationTitle("Hands")
     }
 
-    private func debugCard(title: String, state: HandGestureState, info: String) -> some View {
+    private func debugCard(title: String, state: HandGestureState, rows: [GestureDebugRow]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption)
@@ -73,12 +73,12 @@ private struct HandDebugView: View {
                 .font(.system(size: 20, weight: .bold, design: .monospaced))
                 .foregroundColor(colorForState(state))
 
-            Text(info)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(6)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 280, alignment: .leading)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(rows) { row in
+                    DebugRowView(row: row)
+                }
+            }
+            .frame(maxWidth: 320, alignment: .leading)
         }
         .padding(12)
         .background(.ultraThinMaterial)
@@ -101,6 +101,50 @@ private struct HandDebugView: View {
             return .cyan
         case .wallControl:
             return .blue
+        }
+    }
+}
+
+private struct DebugRowView: View {
+    let row: GestureDebugRow
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: row.status.systemImage)
+                .foregroundStyle(row.status.color)
+
+            Text(row.title)
+                .font(.caption)
+                .frame(width: 80, alignment: .leading)
+
+            Text(row.detail)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private extension GestureDebugStatus {
+    var systemImage: String {
+        switch self {
+        case .active:
+            return "checkmark.circle.fill"
+        case .inactive:
+            return "xmark.circle"
+        case .unavailable:
+            return "minus.circle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .active:
+            return .green
+        case .inactive:
+            return .red
+        case .unavailable:
+            return .gray
         }
     }
 }

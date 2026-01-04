@@ -18,10 +18,40 @@ enum GestureDetection {
 
     /// Multi-method fist detection that works even when ARKit estimates occluded joints.
     /// Uses multiple signals since ARKit predicts joint positions even when occluded.
-    /// Returns (isFist, debugInfo) tuple.
-    static func checkHandIsFist(skeleton: HandSkeleton?, isLeft: Bool) -> (isFist: Bool, debugInfo: String) {
+    /// Returns debug information for fist detection.
+    struct FistDebugResult {
+        let hasSkeleton: Bool
+        let isFist: Bool
+        let signals: Int
+        let requiredSignals: Int
+        let alignment: Float?
+        let alignmentPassed: Bool
+        let thumbDistance: Float?
+        let thumbCurled: Bool
+        let compactRatio: Float?
+        let compactPassed: Bool
+        let clusterSpread: Float?
+        let clusterPassed: Bool
+        let summary: String
+    }
+
+    static func checkHandIsFist(skeleton: HandSkeleton?, isLeft: Bool) -> FistDebugResult {
         guard let skeleton = skeleton else {
-            return (false, "no skeleton")
+            return FistDebugResult(
+                hasSkeleton: false,
+                isFist: false,
+                signals: 0,
+                requiredSignals: 3,
+                alignment: nil,
+                alignmentPassed: false,
+                thumbDistance: nil,
+                thumbCurled: false,
+                compactRatio: nil,
+                compactPassed: false,
+                clusterSpread: nil,
+                clusterPassed: false,
+                summary: "no skeleton"
+            )
         }
 
         var debugParts: [String] = []
@@ -30,6 +60,7 @@ enum GestureDetection {
 
         // METHOD 1: Finger alignment (relaxed threshold)
         let alignmentResult = checkFingerAlignment(skeleton: skeleton)
+        let alignmentPassed = alignmentResult.alignment < 0.75
         if alignmentResult.alignment < 0.75 {
             fistSignals += 1
             debugParts.append("align:\(String(format: "%.2f", alignmentResult.alignment))✓")
@@ -39,6 +70,7 @@ enum GestureDetection {
 
         // METHOD 2: Thumb position - in a fist, thumb crosses in front of fingers
         let thumbResult = checkThumbCurl(skeleton: skeleton)
+        let thumbPassed = thumbResult.isCurled
         if thumbResult.isCurled {
             fistSignals += 1
             debugParts.append("thumb:curled✓")
@@ -48,6 +80,7 @@ enum GestureDetection {
 
         // METHOD 3: Hand compactness - fist is more compact than open hand
         let compactResult = checkHandCompactness(skeleton: skeleton)
+        let compactPassed = compactResult.isCompact
         if compactResult.isCompact {
             fistSignals += 1
             debugParts.append("compact:\(String(format: "%.2f", compactResult.ratio))✓")
@@ -57,6 +90,7 @@ enum GestureDetection {
 
         // METHOD 4: Fingertip clustering - in a fist, all fingertips are close together
         let clusterResult = checkFingertipClustering(skeleton: skeleton)
+        let clusterPassed = clusterResult.isClustered
         if clusterResult.isClustered {
             fistSignals += 1
             debugParts.append("cluster:\(String(format: "%.2f", clusterResult.spread))✓")
@@ -72,7 +106,21 @@ enum GestureDetection {
             print("[FIST \(isLeft ? "L" : "R")] signals=\(fistSignals)/\(requiredSignals) -> \(isFist ? "FIST" : "open") | \(debugInfo)")
         }
 
-        return (isFist, debugInfo)
+        return FistDebugResult(
+            hasSkeleton: true,
+            isFist: isFist,
+            signals: fistSignals,
+            requiredSignals: requiredSignals,
+            alignment: alignmentResult.alignment,
+            alignmentPassed: alignmentPassed,
+            thumbDistance: thumbResult.distance,
+            thumbCurled: thumbPassed,
+            compactRatio: compactResult.ratio,
+            compactPassed: compactPassed,
+            clusterSpread: clusterResult.spread,
+            clusterPassed: clusterPassed,
+            summary: debugInfo
+        )
     }
 
     /// Check finger alignment using the standard approach
@@ -157,6 +205,16 @@ enum GestureDetection {
 
     // MARK: - Open Palm Detection
 
+    static let openHandExtensionThreshold: Float = 0.05
+    static let palmUpDotThreshold: Float = 0.4
+
+    struct OpenHandDebugResult {
+        let isOpen: Bool
+        let middleExtension: Float?
+        let indexExtension: Float?
+        let threshold: Float
+    }
+
     /// Check if the hand should show a fireball (open palm facing up)
     static func checkShouldShowFireball(anchor: HandAnchor, skeleton: HandSkeleton?) -> Bool {
         guard let skeleton = skeleton else { return false }
@@ -170,7 +228,7 @@ enum GestureDetection {
         guard let palmNormal = getPalmNormal(anchor: anchor, skeleton: skeleton) else { return false }
         let worldUp = SIMD3<Float>(0, 1, 0)
         let dotProduct = simd_dot(simd_normalize(palmNormal), worldUp)
-        return dotProduct > 0.4
+        return dotProduct > palmUpDotThreshold
     }
 
     /// Check if palm is facing downward for wall placement control
@@ -183,26 +241,52 @@ enum GestureDetection {
 
     /// Check if hand is open by measuring finger extension
     static func checkHandIsOpen(skeleton: HandSkeleton) -> Bool {
+        checkHandIsOpenDetailed(skeleton: skeleton).isOpen
+    }
+
+    /// Check if hand is open by measuring finger extension and return debug details.
+    static func checkHandIsOpenDetailed(skeleton: HandSkeleton?) -> OpenHandDebugResult {
+        guard let skeleton = skeleton else {
+            return OpenHandDebugResult(
+                isOpen: false,
+                middleExtension: nil,
+                indexExtension: nil,
+                threshold: openHandExtensionThreshold
+            )
+        }
+
         let middleTip = skeleton.joint(.middleFingerTip)
         let middleKnuckle = skeleton.joint(.middleFingerKnuckle)
         let indexTip = skeleton.joint(.indexFingerTip)
         let indexKnuckle = skeleton.joint(.indexFingerKnuckle)
 
-        guard middleTip.isTracked && middleKnuckle.isTracked &&
-              indexTip.isTracked && indexKnuckle.isTracked else {
-            return false
+        let middleExtension: Float?
+        if middleTip.isTracked && middleKnuckle.isTracked {
+            let middleTipPos = extractPosition(from: middleTip.anchorFromJointTransform)
+            let middleKnucklePos = extractPosition(from: middleKnuckle.anchorFromJointTransform)
+            middleExtension = simd_distance(middleTipPos, middleKnucklePos)
+        } else {
+            middleExtension = nil
         }
 
-        let middleTipPos = extractPosition(from: middleTip.anchorFromJointTransform)
-        let middleKnucklePos = extractPosition(from: middleKnuckle.anchorFromJointTransform)
-        let indexTipPos = extractPosition(from: indexTip.anchorFromJointTransform)
-        let indexKnucklePos = extractPosition(from: indexKnuckle.anchorFromJointTransform)
+        let indexExtension: Float?
+        if indexTip.isTracked && indexKnuckle.isTracked {
+            let indexTipPos = extractPosition(from: indexTip.anchorFromJointTransform)
+            let indexKnucklePos = extractPosition(from: indexKnuckle.anchorFromJointTransform)
+            indexExtension = simd_distance(indexTipPos, indexKnucklePos)
+        } else {
+            indexExtension = nil
+        }
 
-        let middleExtension = simd_distance(middleTipPos, middleKnucklePos)
-        let indexExtension = simd_distance(indexTipPos, indexKnucklePos)
+        let isOpen = (middleExtension ?? 0) > openHandExtensionThreshold &&
+            (indexExtension ?? 0) > openHandExtensionThreshold
 
-        let extensionThreshold: Float = 0.05
-        return middleExtension > extensionThreshold && indexExtension > extensionThreshold
+        return OpenHandDebugResult(
+            isOpen: isOpen,
+            middleExtension: middleExtension,
+            indexExtension: indexExtension,
+            threshold: openHandExtensionThreshold
+        )
     }
 
     /// Check if palm is facing down for wall control (finger visibility not required)

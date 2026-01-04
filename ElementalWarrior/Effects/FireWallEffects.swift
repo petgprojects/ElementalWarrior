@@ -236,7 +236,7 @@ func createFireWallEffect(width: Float, height: Float) -> FireWallVisual {
 @MainActor
 func updateFireWallEffect(_ visual: FireWallVisual, width: Float, height: Float) {
     let clampedWidth = max(0.2, width)
-    let clampedHeight = clamp(height, min: 0.2, max: 4.0)
+    let clampedHeight = clamp(height, min: 0.05, max: 4.0)
 
     if var emitter = visual.coreEmitter.components[ParticleEmitterComponent.self] {
         configureFireWallEmitter(
@@ -380,7 +380,7 @@ private func configureFireWallEmitter(
     emitter.mainEmitter.birthRate = birthRatePerMeter * width
     emitter.speed = baseSpeed
 
-    let lifeSpan = Double(clamp(height / max(0.1, baseSpeed), min: 0.35, max: 2.6))
+    let lifeSpan = Double(clamp(height / max(0.1, baseSpeed), min: 0.08, max: 2.6))
     emitter.mainEmitter.lifeSpan = lifeSpan
     emitter.mainEmitter.lifeSpanVariation = lifeSpan * 0.25
 }

@@ -42,7 +42,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Dynamic point lighting from fireballs
   - **Flamethrower Mode**: Open hand in "stop" gesture (palm facing away, fingers up) to shoot a continuous flame stream from your palm
   - **Combined Flamethrower**: When using flamethrowers with both hands, bring hands together (within 15cm) to merge into a single powerful combined stream with enhanced visuals and audio; separating hands splits back into individual streams
-  - **Wall of Fire**: Hold both hands out in a palms-down "zombie" pose to lay a blue ember line on the ground, spread hands to widen, move hands to reposition, raise hands to grow height, then clench both fists to confirm (walls stay red after confirmation); look at an existing wall with zombie arms to turn it green after 0.5s gaze, clench both fists to edit (blue), then clench again to confirm or despawn by bringing it back to ember height
+  - **Wall of Fire**: Hold both hands out in a palms-down "zombie" pose to lay a blue ember line on the ground, spread hands to widen, move hands to reposition, raise hands to grow height, then clench both fists to confirm (walls stay red after confirmation); look at an existing wall with zombie arms to turn it green after 0.5s gaze, clench both fists to edit (blue), then clench again to confirm or despawn by bringing it back to ember height; crackle audio and a subtle fade-out on despawn
 - **Audio System**:
   - Fire crackle sound (looping) while holding fireballs with fade in/out
   - Flamethrower sound (looping) during flame stream with audio boost when combined

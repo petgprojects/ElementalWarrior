@@ -67,6 +67,8 @@ final class HandTrackingManager {
         let id: UUID
         var visual: FireWallVisual
         var emberVisual: EmberLineVisual?
+        var audioEntity: Entity?
+        var crackleController: AudioPlaybackController?
         var width: Float
         var height: Float
         var lineDirection: SIMD3<Float>
@@ -836,6 +838,13 @@ final class HandTrackingManager {
         isFist: Bool,
         anchor: HandAnchor
     ) async {
+        if wallEdit != nil {
+            if !leftHandState.isAnimating, leftHandState.fireball != nil {
+                await extinguishLeft()
+            }
+            await stopFlamethrower(for: .left)
+            return
+        }
         GestureDetection.updatePositionHistory(for: &leftHandState, position: fistPosition)
 
         if shouldFlamethrower {
@@ -942,6 +951,13 @@ final class HandTrackingManager {
         isFist: Bool,
         anchor: HandAnchor
     ) async {
+        if wallEdit != nil {
+            if !rightHandState.isAnimating, rightHandState.fireball != nil {
+                await extinguishRight()
+            }
+            await stopFlamethrower(for: .right)
+            return
+        }
         GestureDetection.updatePositionHistory(for: &rightHandState, position: fistPosition)
 
         if shouldFlamethrower {
@@ -1479,6 +1495,13 @@ final class HandTrackingManager {
         max(minValue, min(value, maxValue))
     }
 
+    private func wallCrackleGain(for height: Float) -> Double {
+        let normalized = Double(clamp(height / GestureConstants.wallMaxHeight, min: 0.0, max: 1.0))
+        let minGain = -20.0
+        let maxGain = -4.0
+        return minGain + (maxGain - minGain) * normalized
+    }
+
     private func areBothFistsHeld(now: TimeInterval) -> Bool {
         let leftFresh = now - leftFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
         let rightFresh = now - rightFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
@@ -1721,13 +1744,25 @@ final class HandTrackingManager {
             height: height,
             lineDirection: placement.lineDirection,
             planeNormal: placement.planeNormal,
-            wallNormal: wallNormal,
-            basePosition: placement.currentCenter,
-            paletteState: .editing,
-            isCollapsing: false,
-            isEmberMode: false,
-            paletteTask: nil
-        )
+        wallNormal: wallNormal,
+        basePosition: placement.currentCenter,
+        paletteState: .editing,
+        isCollapsing: false,
+        isEmberMode: false,
+        paletteTask: nil
+    )
+        wallState.audioEntity = Entity()
+        wallState.audioEntity?.name = "FireWallAudio"
+        if let audioEntity = wallState.audioEntity {
+            audioEntity.position = wallState.basePosition
+            rootEntity.addChild(audioEntity)
+            if let crackle = crackleSound {
+                let controller = audioEntity.playAudio(crackle)
+                controller.gain = -80
+                controller.fade(to: wallCrackleGain(for: height), duration: 0.6)
+                wallState.crackleController = controller
+            }
+        }
         syncWallVisuals(wall: &wallState)
 
         rootEntity.addChild(wallState.visual.root)
@@ -1941,6 +1976,18 @@ final class HandTrackingManager {
         entity.removeFromParent()
     }
 
+    private func fadeOutEntity(_ entity: Entity, duration: TimeInterval = 0.35, steps: Int = 12) async {
+        let clampedSteps = max(1, steps)
+        let sleepMs = Int((duration / Double(clampedSteps)) * 1000)
+        entity.components.set(OpacityComponent(opacity: 1.0))
+        for step in 0..<clampedSteps {
+            guard entity.parent != nil else { return }
+            let t = Float(1.0 - Double(step + 1) / Double(clampedSteps))
+            entity.components.set(OpacityComponent(opacity: t))
+            try? await Task.sleep(for: .milliseconds(sleepMs))
+        }
+    }
+
     private func collapseWall(id: UUID) async {
         guard var wall = fireWalls[id], !wall.isCollapsing else { return }
         wall.paletteTask?.cancel()
@@ -1953,16 +2000,27 @@ final class HandTrackingManager {
             let t = 1.0 - Float(step + 1) / Float(steps)
             let height = max(0.1, startHeight * t)
             wall.height = height
-            updateFireWallEffect(wall.visual, width: wall.width, height: height)
+            syncWallVisuals(wall: &wall)
             fireWalls[id] = wall
             try? await Task.sleep(for: .milliseconds(35))
         }
 
         stopFireWallEmission(wall.visual)
-        try? await Task.sleep(for: .milliseconds(400))
+        wall.crackleController?.fade(to: -80, duration: 0.4)
+        if let emberVisual = wall.emberVisual {
+            await fadeOutEntity(emberVisual.root, duration: 0.3)
+        } else {
+            await fadeOutEntity(wall.visual.root, duration: 0.3)
+        }
+        try? await Task.sleep(for: .milliseconds(150))
+        wall.crackleController?.stop()
+        wall.crackleController = nil
         wall.visual.root.removeFromParent()
         if let emberVisual = wall.emberVisual {
             emberVisual.root.removeFromParent()
+        }
+        if let audioEntity = wall.audioEntity {
+            audioEntity.removeFromParent()
         }
         fireWalls.removeValue(forKey: id)
         clearWallSelection(resetPalette: true)
@@ -2027,11 +2085,30 @@ final class HandTrackingManager {
     }
 
     private func syncWallVisuals(wall: inout FireWallState) {
+        if wall.audioEntity == nil {
+            wall.audioEntity = Entity()
+            wall.audioEntity?.name = "FireWallAudio"
+            if let audioEntity = wall.audioEntity {
+                audioEntity.position = wall.basePosition
+                rootEntity.addChild(audioEntity)
+                if let crackle = crackleSound {
+                    let controller = audioEntity.playAudio(crackle)
+                    controller.gain = -80
+                    controller.fade(to: wallCrackleGain(for: wall.height), duration: 0.4)
+                    wall.crackleController = controller
+                }
+            }
+        }
+
         wall.visual.root.transform = makeBasisTransform(
             position: wall.basePosition,
             lineDirection: wall.lineDirection,
             planeNormal: wall.planeNormal
         )
+        wall.audioEntity?.position = wall.basePosition
+        if let controller = wall.crackleController {
+            controller.gain = wallCrackleGain(for: wall.height)
+        }
 
         let shouldShowEmbers = wall.height <= GestureConstants.wallEmberHeight
         if shouldShowEmbers {

@@ -144,4 +144,5 @@ enum GestureConstants {
     static let wallFinalizeDropThreshold: Float = 0.1         // meters below base to lock wall height
     static let wallRemovalDropThreshold: Float = 0.12         // meters below base to drop wall
     static let wallSelectionMaxDistance: Float = 6.0          // meters max gaze selection distance
+    static let wallSelectionHoldDuration: TimeInterval = 0.5  // seconds to gaze before selection highlight
 }

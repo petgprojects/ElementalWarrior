@@ -61,6 +61,38 @@ enum CollisionSystem {
         return closestHit
     }
 
+    /// Raycast a continuous beam (e.g., flamethrower) against cached mesh geometry.
+    static func raycastBeam(
+        origin: SIMD3<Float>,
+        direction: SIMD3<Float>,
+        maxDistance: Float,
+        meshCache: [UUID: CachedMeshGeometry]
+    ) -> HitResult? {
+        let dirLength = simd_length(direction)
+        guard dirLength > 0.0001 else { return nil }
+        let normalizedDirection = direction / dirLength
+
+        var closestHit: HitResult?
+        var closestDistance = maxDistance
+
+        for (_, cachedMesh) in meshCache {
+            if let hit = raycastAgainstCachedMesh(
+                rayOrigin: origin,
+                rayDirection: normalizedDirection,
+                maxDistance: closestDistance,
+                cached: cachedMesh
+            ) {
+                let hitDistance = simd_distance(origin, hit.position)
+                if hitDistance < closestDistance {
+                    closestDistance = hitDistance
+                    closestHit = hit
+                }
+            }
+        }
+
+        return closestHit
+    }
+
     // MARK: - Mesh Raycasting
 
     /// Perform raycast against cached mesh geometry (works even when ARKit anchor is gone)

@@ -256,89 +256,153 @@ final class HandTrackingManager {
     ) -> [GestureDebugRow] {
         var rows: [GestureDebugRow] = []
 
-        let trackingDetail = "skel:\(hasSkeleton ? "✓" : "✗") palm:\(hasPalmNormal ? "✓" : "✗")"
         rows.append(GestureDebugRow(
             title: "Tracking",
             status: hasSkeleton ? .active : .inactive,
-            detail: trackingDetail
+            attributes: [
+                attribute(name: "Skeleton", value: hasSkeleton ? "✓" : "✗", status: statusFor(hasSkeleton)),
+                attribute(name: "Palm normal", value: hasPalmNormal ? "✓" : "✗", status: statusFor(hasPalmNormal))
+            ]
         ))
 
-        let openThresholdText = String(format: "%.2f", openDebug.threshold)
         let middlePassed = (openDebug.middleExtension ?? 0) > openDebug.threshold
         let indexPassed = (openDebug.indexExtension ?? 0) > openDebug.threshold
         let openSignals = (middlePassed ? 1 : 0) + (indexPassed ? 1 : 0)
-        let openDetail = "open:\(openSignals)/2 mid:\(formatValue(openDebug.middleExtension, format: "%.3f"))\(mark(middlePassed)) " +
-            "idx:\(formatValue(openDebug.indexExtension, format: "%.3f"))\(mark(indexPassed)) (>\(openThresholdText))"
-
-        let palmUpThresholdText = String(format: "%.2f", GestureDetection.palmUpDotThreshold)
-        let palmUpDetail = "palmUp:\(formatValue(palmUpDot))\(mark(isPalmUp)) (>\(palmUpThresholdText))"
         let summonSignals = (isPalmUp ? 1 : 0) + (openDebug.isOpen ? 1 : 0)
-        let summonDetail = "\(summonSignals)/2\(shouldShowFireball ? "✓" : ""): \(palmUpDetail) | \(openDetail)"
+        let summonStatus: GestureDebugStatus = hasSkeleton ? (shouldShowFireball ? .active : .inactive) : .unavailable
         rows.append(GestureDebugRow(
             title: "Summon",
-            status: hasSkeleton ? (shouldShowFireball ? .active : .inactive) : .unavailable,
-            detail: summonDetail
+            status: summonStatus,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(summonSignals, total: 2, isActive: shouldShowFireball),
+                    status: statusFor(shouldShowFireball, available: hasSkeleton)
+                ),
+                attribute(
+                    name: "Palm up",
+                    value: comparisonValue(palmUpDot, valueFormat: "%.2f", comparator: ">", threshold: GestureDetection.palmUpDotThreshold),
+                    status: statusFor(isPalmUp, available: palmUpDot != nil)
+                ),
+                attribute(
+                    name: "Open middle",
+                    value: comparisonValue(openDebug.middleExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(middlePassed, available: openDebug.middleExtension != nil)
+                ),
+                attribute(
+                    name: "Open index",
+                    value: comparisonValue(openDebug.indexExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(indexPassed, available: openDebug.indexExtension != nil)
+                )
+            ]
         ))
 
-        let holdingDetail = "showing:\(isShowingFireball ? "✓" : "✗") | entity:\(hasFireball ? "✓" : "✗")"
         rows.append(GestureDebugRow(
             title: "Holding",
             status: isShowingFireball ? .active : .inactive,
-            detail: holdingDetail
+            attributes: [
+                attribute(name: "Showing", value: isShowingFireball ? "✓" : "✗", status: statusFor(isShowingFireball)),
+                attribute(name: "Entity", value: hasFireball ? "✓" : "✗", status: statusFor(hasFireball))
+            ]
         ))
 
-        let alignPassed: Bool
-        if let alignment = forwardDebug.alignment {
-            alignPassed = alignment > GestureConstants.flamethrowerForwardDotThreshold
-        } else {
-            alignPassed = false
-        }
-        let vertPassed: Bool
-        if let vertical = forwardDebug.verticalAlignment {
-            vertPassed = vertical < GestureConstants.flamethrowerUpRejectThreshold
-        } else {
-            vertPassed = false
-        }
+        let alignPassed = forwardDebug.alignment.map { $0 > GestureConstants.flamethrowerForwardDotThreshold } ?? false
+        let vertPassed = forwardDebug.verticalAlignment.map { $0 < GestureConstants.flamethrowerUpRejectThreshold } ?? false
         let flameSignals = (openDebug.isOpen ? 1 : 0) + (forwardDebug.isFacingForward ? 1 : 0)
-        let flameDetail = "\(flameSignals)/2\(shouldUseFlamethrower ? "✓" : ""): \(openDetail) | " +
-            "align:\(formatValue(forwardDebug.alignment))\(mark(alignPassed)) (>\(String(format: "%.2f", GestureConstants.flamethrowerForwardDotThreshold))) | " +
-            "vert:\(formatValue(forwardDebug.verticalAlignment))\(mark(vertPassed)) (<\(String(format: "%.2f", GestureConstants.flamethrowerUpRejectThreshold)))"
+        let flameStatus: GestureDebugStatus = hasSkeleton ? (shouldUseFlamethrower ? .active : .inactive) : .unavailable
         rows.append(GestureDebugRow(
             title: "Flame",
-            status: hasSkeleton ? (shouldUseFlamethrower ? .active : .inactive) : .unavailable,
-            detail: flameDetail
+            status: flameStatus,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(flameSignals, total: 2, isActive: shouldUseFlamethrower),
+                    status: statusFor(shouldUseFlamethrower, available: hasSkeleton)
+                ),
+                attribute(
+                    name: "Open middle",
+                    value: comparisonValue(openDebug.middleExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(middlePassed, available: openDebug.middleExtension != nil)
+                ),
+                attribute(
+                    name: "Open index",
+                    value: comparisonValue(openDebug.indexExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(indexPassed, available: openDebug.indexExtension != nil)
+                ),
+                attribute(
+                    name: "Align",
+                    value: comparisonValue(forwardDebug.alignment, comparator: ">", threshold: GestureConstants.flamethrowerForwardDotThreshold),
+                    status: statusFor(alignPassed, available: forwardDebug.alignment != nil)
+                ),
+                attribute(
+                    name: "Vertical",
+                    value: comparisonValue(forwardDebug.verticalAlignment, comparator: "<", threshold: GestureConstants.flamethrowerUpRejectThreshold),
+                    status: statusFor(vertPassed, available: forwardDebug.verticalAlignment != nil)
+                )
+            ]
         ))
 
-        let fistDetail: String
-        if fistDebug.hasSkeleton {
-            let alignText = "align:\(formatValue(fistDebug.alignment))\(mark(fistDebug.alignmentPassed))"
-            let thumbText = fistDebug.thumbCurled
-                ? "thumb:curled✓"
-                : "thumb:\(formatValue(fistDebug.thumbDistance))"
-            let compactText = "compact:\(formatValue(fistDebug.compactRatio))\(mark(fistDebug.compactPassed))"
-            let clusterText = "cluster:\(formatValue(fistDebug.clusterSpread))\(mark(fistDebug.clusterPassed))"
-            fistDetail = "\(fistDebug.signals)/4\(fistDebug.isFist ? "✓" : ""): \(alignText) | \(thumbText) | \(compactText) | \(clusterText)"
-        } else {
-            fistDetail = "no skeleton"
-        }
+        let fistStatus: GestureDebugStatus = fistDebug.hasSkeleton ? (fistDebug.isFist ? .active : .inactive) : .unavailable
+        let thumbValue = fistDebug.thumbCurled
+            ? "curled"
+            : comparisonValue(fistDebug.thumbDistance, comparator: "<", threshold: GestureDetection.thumbCurlDistanceThreshold)
         rows.append(GestureDebugRow(
             title: "Fist",
-            status: fistDebug.hasSkeleton ? (fistDebug.isFist ? .active : .inactive) : .unavailable,
-            detail: fistDetail
+            status: fistStatus,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(fistDebug.signals, total: 4, isActive: fistDebug.isFist),
+                    status: statusFor(fistDebug.isFist, available: fistDebug.hasSkeleton)
+                ),
+                attribute(
+                    name: "Align",
+                    value: comparisonValue(fistDebug.alignment, comparator: "<", threshold: GestureDetection.fistAlignmentThreshold),
+                    status: statusFor(fistDebug.alignmentPassed, available: fistDebug.alignment != nil)
+                ),
+                attribute(
+                    name: "Thumb",
+                    value: thumbValue,
+                    status: statusFor(fistDebug.thumbCurled, available: fistDebug.thumbDistance != nil || fistDebug.thumbCurled)
+                ),
+                attribute(
+                    name: "Compact",
+                    value: comparisonValue(fistDebug.compactRatio, comparator: "<", threshold: GestureDetection.fistCompactRatioThreshold),
+                    status: statusFor(fistDebug.compactPassed, available: fistDebug.compactRatio != nil)
+                ),
+                attribute(
+                    name: "Cluster",
+                    value: comparisonValue(fistDebug.clusterSpread, comparator: "<", threshold: GestureDetection.fistClusterSpreadThreshold),
+                    status: statusFor(fistDebug.clusterPassed, available: fistDebug.clusterSpread != nil)
+                )
+            ]
         ))
 
-        let collisionThresholdText = String(format: "%.2f", GestureConstants.punchProximityThreshold)
-        let leftCollisionPassed = distToLeftFireball.map { $0 < GestureConstants.punchProximityThreshold } ?? false
-        let rightCollisionPassed = distToRightFireball.map { $0 < GestureConstants.punchProximityThreshold } ?? false
+        let collisionThreshold = GestureConstants.punchProximityThreshold
+        let leftCollisionPassed = distToLeftFireball.map { $0 < collisionThreshold } ?? false
+        let rightCollisionPassed = distToRightFireball.map { $0 < collisionThreshold } ?? false
         let collisionSignals = (fistDebug.isFist ? 1 : 0) + ((leftCollisionPassed || rightCollisionPassed) ? 1 : 0)
-        let collisionDetail = "\(collisionSignals)/2\(isCollidingWithFireball ? "✓" : ""): " +
-            "fist:\(fistDebug.isFist ? "✓" : "✗") | " +
-            "toL:\(formatValue(distToLeftFireball))\(mark(leftCollisionPassed)) | " +
-            "toR:\(formatValue(distToRightFireball))\(mark(rightCollisionPassed)) (<\(collisionThresholdText))"
         rows.append(GestureDebugRow(
             title: "Collision",
             status: isCollidingWithFireball ? .active : .inactive,
-            detail: collisionDetail
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(collisionSignals, total: 2, isActive: isCollidingWithFireball),
+                    status: statusFor(isCollidingWithFireball)
+                ),
+                attribute(name: "Fist", value: fistDebug.isFist ? "✓" : "✗", status: statusFor(fistDebug.isFist)),
+                attribute(
+                    name: "Left dist",
+                    value: comparisonValue(distToLeftFireball, comparator: "<", threshold: collisionThreshold),
+                    status: statusFor(leftCollisionPassed, available: distToLeftFireball != nil)
+                ),
+                attribute(
+                    name: "Right dist",
+                    value: comparisonValue(distToRightFireball, comparator: "<", threshold: collisionThreshold),
+                    status: statusFor(rightCollisionPassed, available: distToRightFireball != nil)
+                )
+            ]
         ))
 
         let downDotThreshold = Float(cos(Double(GestureConstants.zombiePoseMinDownAngleDegrees) * Double.pi / 180.0))
@@ -349,12 +413,6 @@ final class HandTrackingManager {
         let wallSignals = (palmDownPassed ? 1 : 0) +
             (zombieDebug.hasDevicePose && forwardPassed ? 1 : 0) +
             (zombieDebug.hasDevicePose && downDotPassed ? 1 : 0)
-        let wallDetail = "\(wallSignals)/\(wallTotal)\(zombieDebug.isZombiePose ? "✓" : ""): " +
-            "palmDown:\(formatValue(zombieDebug.palmDownDot))\(mark(palmDownPassed)) (<\(String(format: "%.2f", GestureConstants.zombiePosePalmDownDotThreshold))) | " +
-            "fwd:\(formatValue(zombieDebug.forwardDistance))\(mark(forwardPassed)) (>\(String(format: "%.2f", GestureConstants.zombiePoseMinForwardDistance))) | " +
-            "downDot:\(formatValue(zombieDebug.downDot))\(mark(downDotPassed)) (<=\(String(format: "%.2f", downDotThreshold))) | " +
-            "both:\(isZombiePoseActive ? "✓" : "✗") | " +
-            "block:\(zombieDebug.isFistBlocked ? "fist" : "none")"
         let wallStatus: GestureDebugStatus
         if zombieDebug.palmDownDot == nil && !zombieDebug.isFistBlocked {
             wallStatus = .unavailable
@@ -366,19 +424,60 @@ final class HandTrackingManager {
         rows.append(GestureDebugRow(
             title: "Wall Pose",
             status: wallStatus,
-            detail: wallDetail
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(wallSignals, total: wallTotal, isActive: zombieDebug.isZombiePose),
+                    status: statusFor(zombieDebug.isZombiePose, available: wallStatus != .unavailable)
+                ),
+                attribute(
+                    name: "Palm down",
+                    value: comparisonValue(zombieDebug.palmDownDot, comparator: "<", threshold: GestureConstants.zombiePosePalmDownDotThreshold),
+                    status: statusFor(palmDownPassed, available: zombieDebug.palmDownDot != nil)
+                ),
+                attribute(
+                    name: "Forward",
+                    value: comparisonValue(zombieDebug.forwardDistance, comparator: ">", threshold: GestureConstants.zombiePoseMinForwardDistance),
+                    status: statusFor(forwardPassed, available: zombieDebug.forwardDistance != nil)
+                ),
+                attribute(
+                    name: "Down dot",
+                    value: comparisonValue(zombieDebug.downDot, comparator: "<=", threshold: downDotThreshold),
+                    status: statusFor(downDotPassed, available: zombieDebug.downDot != nil)
+                ),
+                attribute(name: "Both hands", value: isZombiePoseActive ? "✓" : "✗", status: statusFor(isZombiePoseActive)),
+                attribute(name: "Blocked", value: zombieDebug.isFistBlocked ? "fist" : "none", status: zombieDebug.isFistBlocked ? .fail : .neutral)
+            ]
         ))
 
         return rows
     }
 
-    private func formatValue(_ value: Float?, format: String = "%.2f") -> String {
-        guard let value = value else { return "--" }
-        return String(format: format, value)
+    private func attribute(name: String, value: String, status: GestureDebugAttributeStatus = .neutral) -> GestureDebugAttribute {
+        GestureDebugAttribute(name: name, value: value, status: status)
     }
 
-    private func mark(_ passed: Bool) -> String {
-        passed ? "✓" : ""
+    private func statusFor(_ passed: Bool, available: Bool = true) -> GestureDebugAttributeStatus {
+        guard available else { return .neutral }
+        return passed ? .pass : .fail
+    }
+
+    private func signalText(_ signals: Int, total: Int, isActive: Bool) -> String {
+        let mark = isActive ? " ✓" : ""
+        return "\(signals)/\(total)\(mark)"
+    }
+
+    private func comparisonValue(
+        _ value: Float?,
+        valueFormat: String = "%.2f",
+        comparator: String,
+        threshold: Float,
+        thresholdFormat: String = "%.2f"
+    ) -> String {
+        guard let value = value else { return "--" }
+        let valueText = String(format: valueFormat, value)
+        let thresholdText = String(format: thresholdFormat, threshold)
+        return "\(valueText) \(comparator) \(thresholdText)"
     }
 
     // MARK: - Template Loading

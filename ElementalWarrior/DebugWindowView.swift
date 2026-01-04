@@ -7,55 +7,34 @@ import SwiftUI
 
 struct DebugWindowView: View {
     @Environment(AppModel.self) private var appModel
-    @State private var selection: DebugTab? = .hands
 
     var body: some View {
         NavigationSplitView {
-            List(DebugTab.allCases, selection: $selection) { tab in
-                Label(tab.title, systemImage: tab.systemImage)
+            List {
+                NavigationLink {
+                    HandDebugView()
+                } label: {
+                    Label("Hands", systemImage: "hand.raised")
+                }
+
+                NavigationLink {
+                    RoomDebugView()
+                } label: {
+                    Label("Room", systemImage: "camera.metering.spot")
+                }
+
+                NavigationLink {
+                    OptionsDebugView(settings: appModel.gestureSettings)
+                } label: {
+                    Label("Options", systemImage: "slider.horizontal.3")
+                }
             }
+            .listStyle(.sidebar)
             .navigationTitle("Debug")
         } detail: {
-            switch selection ?? .hands {
-            case .hands:
-                HandDebugView()
-            case .room:
-                RoomDebugView()
-            case .options:
-                OptionsDebugView(settings: appModel.gestureSettings)
-            }
+            HandDebugView()
         }
         .navigationSplitViewStyle(.balanced)
-    }
-}
-
-private enum DebugTab: String, CaseIterable, Identifiable {
-    case hands
-    case room
-    case options
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .hands:
-            return "Hands"
-        case .room:
-            return "Room"
-        case .options:
-            return "Options"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .hands:
-            return "hand.raised"
-        case .room:
-            return "camera.metering.spot"
-        case .options:
-            return "slider.horizontal.3"
-        }
     }
 }
 

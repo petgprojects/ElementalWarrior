@@ -19,6 +19,68 @@ import UIKit
 final class HandTrackingManager {
     let rootEntity = Entity()
 
+    private struct HandPoseSnapshot {
+        var palmPosition: SIMD3<Float> = .zero
+        var palmNormal: SIMD3<Float> = .zero
+        var isZombiePose: Bool = false
+        var lastUpdated: TimeInterval = 0
+    }
+
+    private struct FistSnapshot {
+        var isFist: Bool = false
+        var lastUpdated: TimeInterval = 0
+    }
+
+    private struct EmberPlacementState {
+        var visual: EmberLineVisual
+        var planeNormal: SIMD3<Float>
+        var baseLineDirection: SIMD3<Float>
+        var lineDirection: SIMD3<Float>
+        var baseCenter: SIMD3<Float>
+        var baseMidpoint: SIMD3<Float>
+        var lastMidpoint: SIMD3<Float>
+        var baseHandHeight: Float
+        var currentWidth: Float
+        var currentCenter: SIMD3<Float>
+    }
+
+    private struct WallEditState {
+        var wallID: UUID
+        var baseHandHeight: Float
+        var baseWallHeight: Float
+        var baseCenter: SIMD3<Float>
+        var baseMidpoint: SIMD3<Float>
+        var lastMidpoint: SIMD3<Float>
+        var baseWidth: Float
+        var baseSeparation: Float
+        var baseLineDirection: SIMD3<Float>
+        var baseForwardOffset: Float
+    }
+
+    private enum FireWallPaletteState {
+        case idle
+        case selecting
+        case editing
+    }
+
+    private struct FireWallState {
+        let id: UUID
+        var visual: FireWallVisual
+        var emberVisual: EmberLineVisual?
+        var audioEntity: Entity?
+        var crackleController: AudioPlaybackController?
+        var width: Float
+        var height: Float
+        var lineDirection: SIMD3<Float>
+        var planeNormal: SIMD3<Float>
+        var wallNormal: SIMD3<Float>
+        var basePosition: SIMD3<Float>
+        var paletteState: FireWallPaletteState
+        var isCollapsing: Bool
+        var isEmberMode: Bool
+        var paletteTask: Task<Void, Never>?
+    }
+
     private let session = ARKitSession()
     private let handTracking = HandTrackingProvider()
     private let worldTracking = WorldTrackingProvider()
@@ -67,6 +129,19 @@ final class HandTrackingManager {
     // State tracking
     private var leftHandState = HandState()
     private var rightHandState = HandState()
+    private var leftPoseSnapshot = HandPoseSnapshot()
+    private var rightPoseSnapshot = HandPoseSnapshot()
+    private var leftFistSnapshot = FistSnapshot()
+    private var rightFistSnapshot = FistSnapshot()
+    private var isZombiePoseActive: Bool = false
+    private var lastZombiePoseTime: TimeInterval = 0
+
+    private var emberPlacement: EmberPlacementState?
+    private var wallEdit: WallEditState?
+    private var bothFistsStartTime: TimeInterval?
+    private var fireWalls: [UUID: FireWallState] = [:]
+    private var wallSelectionCandidate: (id: UUID, startTime: TimeInterval)?
+    private var selectedWallID: UUID?
 
     // Debug state - observable for UI
     var leftHandGestureState: HandGestureState = .none
@@ -176,6 +251,7 @@ final class HandTrackingManager {
         for await update in handTracking.anchorUpdates {
             let anchor = update.anchor
             let isLeft = anchor.chirality == .left
+            let now = CACurrentMediaTime()
 
             guard anchor.isTracked else {
                 if isLeft {
@@ -187,7 +263,7 @@ final class HandTrackingManager {
             }
 
             let skeleton = anchor.handSkeleton
-            let deviceTransform = worldTracking.queryDeviceAnchor(atTimestamp: CACurrentMediaTime())?.originFromAnchorTransform
+            let deviceTransform = worldTracking.queryDeviceAnchor(atTimestamp: now)?.originFromAnchorTransform
 
             let shouldShowFireball = GestureDetection.checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
             let shouldUseFlamethrower = GestureDetection.checkShouldFireFlamethrower(
@@ -250,6 +326,40 @@ final class HandTrackingManager {
             let palmPosition = GestureDetection.getPalmPosition(anchor: anchor, skeleton: skeleton)
             let fistPosition = GestureDetection.getFistPosition(anchor: anchor, skeleton: skeleton)
 
+            let previousPalmNormal = isLeft ? leftPoseSnapshot.palmNormal : rightPoseSnapshot.palmNormal
+            let resolvedPalmNormal = palmNormal ?? (simd_length(previousPalmNormal) > 0.001 ? previousPalmNormal : nil)
+            let isZombiePoseHand = checkZombiePoseHand(
+                palmNormal: resolvedPalmNormal,
+                palmPosition: palmPosition,
+                isFist: isFist,
+                deviceTransform: deviceTransform
+            )
+
+            updatePoseSnapshot(
+                isLeft: isLeft,
+                palmPosition: palmPosition,
+                palmNormal: resolvedPalmNormal ?? .zero,
+                isZombiePose: isZombiePoseHand,
+                timestamp: now
+            )
+            updateFistSnapshot(isLeft: isLeft, isFist: isFist, timestamp: now)
+
+            let poseActive = isZombiePoseDetected(now: now)
+            if poseActive {
+                lastZombiePoseTime = now
+            }
+            let poseAllowed = poseActive || (now - lastZombiePoseTime < GestureConstants.wallControlGraceDuration)
+            isZombiePoseActive = poseActive
+            let didConfirm = checkBothFistsConfirmed(now: now)
+
+            await handleWallControl(
+                now: now,
+                poseActive: poseActive,
+                poseAllowed: poseAllowed,
+                deviceTransform: deviceTransform,
+                didConfirm: didConfirm
+            )
+
             if isLeft {
                 await handleTrackingRecovered(isLeft: true, position: palmPosition)
                 await updateLeftHand(
@@ -272,6 +382,11 @@ final class HandTrackingManager {
                     isFist: isFist,
                     anchor: anchor
                 )
+            }
+
+            if poseActive {
+                leftHandGestureState = .wallControl
+                rightHandGestureState = .wallControl
             }
 
             // Check for fireball combining after processing hand update
@@ -723,6 +838,13 @@ final class HandTrackingManager {
         isFist: Bool,
         anchor: HandAnchor
     ) async {
+        if wallEdit != nil {
+            if !leftHandState.isAnimating, leftHandState.fireball != nil {
+                await extinguishLeft()
+            }
+            await stopFlamethrower(for: .left)
+            return
+        }
         GestureDetection.updatePositionHistory(for: &leftHandState, position: fistPosition)
 
         if shouldFlamethrower {
@@ -829,6 +951,13 @@ final class HandTrackingManager {
         isFist: Bool,
         anchor: HandAnchor
     ) async {
+        if wallEdit != nil {
+            if !rightHandState.isAnimating, rightHandState.fireball != nil {
+                await extinguishRight()
+            }
+            await stopFlamethrower(for: .right)
+            return
+        }
         GestureDetection.updatePositionHistory(for: &rightHandState, position: fistPosition)
 
         if shouldFlamethrower {
@@ -1338,6 +1467,841 @@ final class HandTrackingManager {
             }
             rightHandState.lastKnownPosition = nil
         }
+    }
+
+    // MARK: - Wall of Fire Control
+
+    private func updatePoseSnapshot(
+        isLeft: Bool,
+        palmPosition: SIMD3<Float>,
+        palmNormal: SIMD3<Float>,
+        isZombiePose: Bool,
+        timestamp: TimeInterval
+    ) {
+        if isLeft {
+            leftPoseSnapshot.palmPosition = palmPosition
+            leftPoseSnapshot.palmNormal = palmNormal
+            leftPoseSnapshot.isZombiePose = isZombiePose
+            leftPoseSnapshot.lastUpdated = timestamp
+        } else {
+            rightPoseSnapshot.palmPosition = palmPosition
+            rightPoseSnapshot.palmNormal = palmNormal
+            rightPoseSnapshot.isZombiePose = isZombiePose
+            rightPoseSnapshot.lastUpdated = timestamp
+        }
+    }
+
+    private func clamp(_ value: Float, min minValue: Float, max maxValue: Float) -> Float {
+        max(minValue, min(value, maxValue))
+    }
+
+    private func wallCrackleGain(for height: Float) -> Double {
+        let normalized = Double(clamp(height / GestureConstants.wallMaxHeight, min: 0.0, max: 1.0))
+        let minGain = -20.0
+        let maxGain = -4.0
+        return minGain + (maxGain - minGain) * normalized
+    }
+
+    private func areBothFistsHeld(now: TimeInterval) -> Bool {
+        let leftFresh = now - leftFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        let rightFresh = now - rightFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        return leftFresh && rightFresh && leftFistSnapshot.isFist && rightFistSnapshot.isFist
+    }
+
+    private func updateFistSnapshot(isLeft: Bool, isFist: Bool, timestamp: TimeInterval) {
+        if isLeft {
+            leftFistSnapshot.isFist = isFist
+            leftFistSnapshot.lastUpdated = timestamp
+        } else {
+            rightFistSnapshot.isFist = isFist
+            rightFistSnapshot.lastUpdated = timestamp
+        }
+    }
+
+    private func checkBothFistsConfirmed(now: TimeInterval) -> Bool {
+        let leftFresh = now - leftFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        let rightFresh = now - rightFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        let bothFists = leftFresh && rightFresh && leftFistSnapshot.isFist && rightFistSnapshot.isFist
+
+        if bothFists {
+            if bothFistsStartTime == nil {
+                bothFistsStartTime = now
+            }
+            if let start = bothFistsStartTime,
+               now - start >= GestureConstants.wallConfirmHoldDuration {
+                bothFistsStartTime = nil
+                return true
+            }
+        } else {
+            bothFistsStartTime = nil
+        }
+        return false
+    }
+
+    private func mappedWallHeight(
+        avgHandHeight: Float,
+        deviceTransform: simd_float4x4?,
+        fallbackBaseHeight: Float,
+        fallbackWallHeight: Float
+    ) -> Float {
+        guard let pose = getDevicePose(deviceTransform: deviceTransform) else {
+            let heightDelta = (avgHandHeight - fallbackBaseHeight) * GestureConstants.wallHeightScale
+            return clamp(
+                fallbackWallHeight + heightDelta,
+                min: 0.05,
+                max: GestureConstants.wallMaxHeight
+            )
+        }
+
+        let low = pose.position.y + GestureConstants.wallHeightReferenceLowOffset
+        let high = pose.position.y + GestureConstants.wallHeightReferenceHighOffset
+        let denom = max(0.05, high - low)
+        let t = clamp((avgHandHeight - low) / denom, min: 0.0, max: 1.0)
+        let minSnap = GestureConstants.wallHeightMinSnapThreshold
+        if t <= minSnap {
+            return max(0.05, GestureConstants.wallEmberHeight * 0.5)
+        }
+        let minWallHeight = max(0.05, GestureConstants.wallEmberHeight + 0.04)
+        let adjustedT = clamp((t - minSnap) / max(0.001, 1.0 - minSnap), min: 0.0, max: 1.0)
+        return minWallHeight + adjustedT * (GestureConstants.wallMaxHeight - minWallHeight)
+    }
+
+    private func checkZombiePoseHand(
+        palmNormal: SIMD3<Float>?,
+        palmPosition: SIMD3<Float>,
+        isFist: Bool,
+        deviceTransform: simd_float4x4?
+    ) -> Bool {
+        guard !isFist else { return false }
+        guard let palmNormal = palmNormal, simd_length(palmNormal) > 0.001 else { return false }
+
+        let worldUp = SIMD3<Float>(0, 1, 0)
+        let palmDownDot = simd_dot(simd_normalize(palmNormal), worldUp)
+        guard palmDownDot < GestureConstants.zombiePosePalmDownDotThreshold else { return false }
+
+        guard let pose = getDevicePose(deviceTransform: deviceTransform) else {
+            return true
+        }
+
+        let toPalm = palmPosition - pose.position
+        let toPalmLength = simd_length(toPalm)
+        guard toPalmLength > 0.001 else { return false }
+        let forwardDistance = simd_dot(toPalm, pose.forward)
+        if forwardDistance < GestureConstants.zombiePoseMinForwardDistance {
+            return false
+        }
+
+        let worldDown = SIMD3<Float>(0, -1, 0)
+        let downDot = simd_dot(toPalm / toPalmLength, worldDown)
+        let minAngleRadians = Double(GestureConstants.zombiePoseMinDownAngleDegrees) * Double.pi / 180.0
+        let cosThreshold = Float(cos(minAngleRadians))
+        return downDot <= cosThreshold
+    }
+
+    private func isZombiePoseDetected(now: TimeInterval) -> Bool {
+        let leftFresh = now - leftPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        let rightFresh = now - rightPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        return leftFresh && rightFresh && leftPoseSnapshot.isZombiePose && rightPoseSnapshot.isZombiePose
+    }
+
+    private func handleWallControl(
+        now: TimeInterval,
+        poseActive: Bool,
+        poseAllowed: Bool,
+        deviceTransform: simd_float4x4?,
+        didConfirm: Bool
+    ) async {
+        let leftFresh = now - leftPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        let rightFresh = now - rightPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        let handsFresh = leftFresh && rightFresh
+        let isHoldingFists = areBothFistsHeld(now: now)
+
+        if didConfirm {
+            if let placement = emberPlacement {
+                await fadeOutEmberPlacement(placement)
+                emberPlacement = nil
+                clearWallSelection(resetPalette: wallEdit == nil)
+                return
+            }
+            if wallEdit != nil {
+                await confirmWallEdit()
+                return
+            }
+            if let selectedWallID = selectedWallID {
+                startWallEdit(wallID: selectedWallID, deviceTransform: deviceTransform)
+                return
+            }
+        }
+
+        if let edit = wallEdit {
+            if poseAllowed && handsFresh {
+                await updateWallEdit(edit: edit, deviceTransform: deviceTransform)
+            }
+            return
+        }
+
+        if let placement = emberPlacement {
+            if poseAllowed && handsFresh {
+                await updateEmberPlacement(placement: placement, deviceTransform: deviceTransform)
+            }
+            return
+        }
+
+        guard poseAllowed else {
+            if !isHoldingFists {
+                clearWallSelection(resetPalette: true)
+            }
+            return
+        }
+
+        guard poseActive else { return }
+
+        if let wallID = selectWallByGaze(deviceTransform: deviceTransform) {
+            updateWallSelection(now: now, wallID: wallID)
+            return
+        }
+
+        clearWallSelection(resetPalette: true)
+        if let hit = gazeGroundHit(deviceTransform: deviceTransform) {
+            startEmberPlacement(hit: hit, deviceTransform: deviceTransform)
+        }
+    }
+
+    private func updateEmberPlacement(placement: EmberPlacementState, deviceTransform: simd_float4x4?) async {
+        var placement = placement
+
+        let leftPos = leftPoseSnapshot.palmPosition
+        let rightPos = rightPoseSnapshot.palmPosition
+        let midpoint = (leftPos + rightPos) * 0.5
+        if let pose = getDevicePose(deviceTransform: deviceTransform) {
+            let deltaForward = simd_dot(rightPos - leftPos, pose.forward)
+            let rotationAngle = clamp(
+                deltaForward * GestureConstants.wallPlacementRotationScale,
+                min: -GestureConstants.wallPlacementRotationMaxRadians,
+                max: GestureConstants.wallPlacementRotationMaxRadians
+            )
+            placement.lineDirection = rotate(
+                direction: placement.baseLineDirection,
+                around: placement.planeNormal,
+                angle: rotationAngle
+            )
+        }
+        let handDelta = midpoint - placement.lastMidpoint
+        let planeDelta = handDelta - placement.planeNormal * simd_dot(handDelta, placement.planeNormal)
+        let scaledPlaneDelta = planeDelta * GestureConstants.wallPlacementMoveScale
+        let targetCenter = placement.currentCenter + scaledPlaneDelta
+
+        let separation = abs(simd_dot(rightPos - leftPos, placement.lineDirection))
+        let scaledSeparation = separation * GestureConstants.wallPlacementWidthScale
+        let targetWidth = clamp(
+            scaledSeparation,
+            min: GestureConstants.wallPlacementMinWidth,
+            max: GestureConstants.wallPlacementMaxWidth
+        )
+
+        let smoothing = GestureConstants.wallPlacementSmoothing
+        placement.currentWidth += (targetWidth - placement.currentWidth) * smoothing
+        placement.currentCenter += (targetCenter - placement.currentCenter) * smoothing
+        placement.lastMidpoint = midpoint
+
+        let placementPosition = placement.currentCenter + placement.planeNormal * GestureConstants.wallEmberOffset
+        placement.visual.root.transform = makeBasisTransform(
+            position: placementPosition,
+            lineDirection: placement.lineDirection,
+            planeNormal: placement.planeNormal
+        )
+        updateEmberLineEffect(placement.visual, width: placement.currentWidth)
+
+        emberPlacement = placement
+
+        let avgHeight = (leftPos.y + rightPos.y) * 0.5
+        if avgHeight - placement.baseHandHeight > GestureConstants.wallRaiseStartThreshold {
+            await beginWallEdit(from: placement, avgHandHeight: avgHeight, deviceTransform: deviceTransform)
+        }
+    }
+
+    private func beginWallEdit(from placement: EmberPlacementState, avgHandHeight: Float, deviceTransform: simd_float4x4?) async {
+        let height = mappedWallHeight(
+            avgHandHeight: avgHandHeight,
+            deviceTransform: deviceTransform,
+            fallbackBaseHeight: placement.baseHandHeight,
+            fallbackWallHeight: 0.0
+        )
+
+        let wallID = UUID()
+        let wallNormal = normalizedWallNormal(
+            lineDirection: placement.lineDirection,
+            planeNormal: placement.planeNormal
+        )
+        let visual = createFireWallEffect(width: placement.currentWidth, height: height)
+        applyFireWallPalette(visual, palette: highlightFireWallPalette())
+
+        var wallState = FireWallState(
+            id: wallID,
+            visual: visual,
+            emberVisual: nil,
+            width: placement.currentWidth,
+            height: height,
+            lineDirection: placement.lineDirection,
+            planeNormal: placement.planeNormal,
+        wallNormal: wallNormal,
+        basePosition: placement.currentCenter,
+        paletteState: .editing,
+        isCollapsing: false,
+        isEmberMode: false,
+        paletteTask: nil
+    )
+        wallState.audioEntity = Entity()
+        wallState.audioEntity?.name = "FireWallAudio"
+        if let audioEntity = wallState.audioEntity {
+            audioEntity.position = wallState.basePosition
+            rootEntity.addChild(audioEntity)
+            if let crackle = crackleSound {
+                let controller = audioEntity.playAudio(crackle)
+                controller.gain = -80
+                controller.fade(to: wallCrackleGain(for: height), duration: 0.6)
+                wallState.crackleController = controller
+            }
+        }
+        syncWallVisuals(wall: &wallState)
+
+        rootEntity.addChild(wallState.visual.root)
+        fireWalls[wallID] = wallState
+
+        let leftPos = leftPoseSnapshot.palmPosition
+        let rightPos = rightPoseSnapshot.palmPosition
+        let separation = abs(simd_dot(rightPos - leftPos, placement.lineDirection))
+        let baseForwardOffset = getDevicePose(deviceTransform: deviceTransform).map {
+            simd_dot(rightPos - leftPos, $0.forward)
+        } ?? 0
+
+        wallEdit = WallEditState(
+            wallID: wallID,
+            baseHandHeight: avgHandHeight,
+            baseWallHeight: height,
+            baseCenter: placement.currentCenter,
+            baseMidpoint: (leftPos + rightPos) * 0.5,
+            lastMidpoint: (leftPos + rightPos) * 0.5,
+            baseWidth: placement.currentWidth,
+            baseSeparation: separation,
+            baseLineDirection: placement.lineDirection,
+            baseForwardOffset: baseForwardOffset
+        )
+        clearWallSelection(resetPalette: false)
+        setWallPaletteTarget(id: wallID, state: .editing)
+
+        emberPlacement = nil
+        await fadeOutEmberPlacement(placement)
+    }
+
+    private func startWallEdit(wallID: UUID, deviceTransform: simd_float4x4?) {
+        guard let wall = fireWalls[wallID], !wall.isCollapsing else { return }
+        let leftPos = leftPoseSnapshot.palmPosition
+        let rightPos = rightPoseSnapshot.palmPosition
+        let separation = abs(simd_dot(rightPos - leftPos, wall.lineDirection))
+        let baseForwardOffset = getDevicePose(deviceTransform: deviceTransform).map {
+            simd_dot(rightPos - leftPos, $0.forward)
+        } ?? 0
+        let avgHeight = (leftPos.y + rightPos.y) * 0.5
+
+        wallEdit = WallEditState(
+            wallID: wallID,
+            baseHandHeight: avgHeight,
+            baseWallHeight: wall.height,
+            baseCenter: wall.basePosition,
+            baseMidpoint: (leftPos + rightPos) * 0.5,
+            lastMidpoint: (leftPos + rightPos) * 0.5,
+            baseWidth: wall.width,
+            baseSeparation: separation,
+            baseLineDirection: wall.lineDirection,
+            baseForwardOffset: baseForwardOffset
+        )
+        clearWallSelection(resetPalette: false)
+        setWallPaletteTarget(id: wallID, state: .editing)
+    }
+
+    private func updateWallEdit(edit: WallEditState, deviceTransform: simd_float4x4?) async {
+        guard var wall = fireWalls[edit.wallID], !wall.isCollapsing else {
+            wallEdit = nil
+            return
+        }
+
+        let leftPos = leftPoseSnapshot.palmPosition
+        let rightPos = rightPoseSnapshot.palmPosition
+        let midpoint = (leftPos + rightPos) * 0.5
+
+        let forwardOffset = getDevicePose(deviceTransform: deviceTransform).map {
+            simd_dot(rightPos - leftPos, $0.forward)
+        } ?? edit.baseForwardOffset
+        let rotationAngle = clamp(
+            (forwardOffset - edit.baseForwardOffset) * GestureConstants.wallPlacementRotationScale,
+            min: -GestureConstants.wallPlacementRotationMaxRadians,
+            max: GestureConstants.wallPlacementRotationMaxRadians
+        )
+
+        let lineDirection = rotate(
+            direction: edit.baseLineDirection,
+            around: wall.planeNormal,
+            angle: rotationAngle
+        )
+
+        let handDelta = midpoint - edit.lastMidpoint
+        let planeDelta = handDelta - wall.planeNormal * simd_dot(handDelta, wall.planeNormal)
+        let scaledPlaneDelta = planeDelta * GestureConstants.wallPlacementMoveScale
+        let targetCenter = wall.basePosition + scaledPlaneDelta
+
+        let separation = abs(simd_dot(rightPos - leftPos, lineDirection))
+        let scaledSeparation = (separation - edit.baseSeparation) * GestureConstants.wallPlacementWidthScale
+        let targetWidth = clamp(
+            edit.baseWidth + scaledSeparation,
+            min: GestureConstants.wallPlacementMinWidth,
+            max: GestureConstants.wallPlacementMaxWidth
+        )
+
+        let avgHeight = (leftPos.y + rightPos.y) * 0.5
+        let targetHeight = mappedWallHeight(
+            avgHandHeight: avgHeight,
+            deviceTransform: deviceTransform,
+            fallbackBaseHeight: edit.baseHandHeight,
+            fallbackWallHeight: edit.baseWallHeight
+        )
+
+        wall.basePosition = targetCenter
+        wall.lineDirection = lineDirection
+        wall.wallNormal = normalizedWallNormal(lineDirection: lineDirection, planeNormal: wall.planeNormal)
+        wall.width = targetWidth
+        wall.height = targetHeight
+
+        syncWallVisuals(wall: &wall)
+
+        fireWalls[wall.id] = wall
+        var updatedEdit = edit
+        updatedEdit.lastMidpoint = midpoint
+        wallEdit = updatedEdit
+    }
+
+    private func confirmWallEdit() async {
+        guard let edit = wallEdit else { return }
+        guard var wall = fireWalls[edit.wallID], !wall.isCollapsing else {
+            wallEdit = nil
+            clearWallSelection(resetPalette: false)
+            setWallPaletteTarget(id: nil, state: .idle)
+            return
+        }
+
+        if wall.height <= GestureConstants.wallEmberHeight {
+            wallEdit = nil
+            await collapseWall(id: edit.wallID)
+            return
+        }
+
+        wallEdit = nil
+        clearWallSelection(resetPalette: false)
+        setWallPaletteTarget(id: nil, state: .idle)
+    }
+
+    private func startEmberPlacement(hit: CollisionSystem.HitResult, deviceTransform: simd_float4x4?) {
+        guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return }
+
+        let baseLineDirection = computeLineDirection(
+            planeNormal: hit.normal,
+            deviceForward: pose.forward,
+            deviceRight: pose.right
+        )
+        let leftPos = leftPoseSnapshot.palmPosition
+        let rightPos = rightPoseSnapshot.palmPosition
+        let deltaForward = simd_dot(rightPos - leftPos, pose.forward)
+        let rotationAngle = clamp(
+            deltaForward * GestureConstants.wallPlacementRotationScale,
+            min: -GestureConstants.wallPlacementRotationMaxRadians,
+            max: GestureConstants.wallPlacementRotationMaxRadians
+        )
+        let lineDirection = rotate(
+            direction: baseLineDirection,
+            around: hit.normal,
+            angle: rotationAngle
+        )
+        let midpoint = (leftPos + rightPos) * 0.5
+        let separation = abs(simd_dot(rightPos - leftPos, lineDirection))
+        let scaledSeparation = separation * GestureConstants.wallPlacementWidthScale
+        let width = clamp(
+            scaledSeparation,
+            min: GestureConstants.wallPlacementMinWidth,
+            max: GestureConstants.wallPlacementMaxWidth
+        )
+        let avgHeight = (leftPos.y + rightPos.y) * 0.5
+
+        let visual = createEmberLineEffect(width: width)
+        let placementPosition = hit.position + hit.normal * GestureConstants.wallEmberOffset
+        visual.root.transform = makeBasisTransform(
+            position: placementPosition,
+            lineDirection: lineDirection,
+            planeNormal: hit.normal
+        )
+        rootEntity.addChild(visual.root)
+
+        emberPlacement = EmberPlacementState(
+            visual: visual,
+            planeNormal: hit.normal,
+            baseLineDirection: baseLineDirection,
+            lineDirection: lineDirection,
+            baseCenter: hit.position,
+            baseMidpoint: midpoint,
+            lastMidpoint: midpoint,
+            baseHandHeight: avgHeight,
+            currentWidth: width,
+            currentCenter: hit.position
+        )
+    }
+
+    private func fadeOutEmberPlacement(_ placement: EmberPlacementState) async {
+        if var emitter = placement.visual.glowEmitter.components[ParticleEmitterComponent.self] {
+            emitter.mainEmitter.birthRate = 0
+            placement.visual.glowEmitter.components.set(emitter)
+        }
+        if var emitter = placement.visual.sparksEmitter.components[ParticleEmitterComponent.self] {
+            emitter.mainEmitter.birthRate = 0
+            placement.visual.sparksEmitter.components.set(emitter)
+        }
+
+        let entity = placement.visual.root
+        let steps = 12
+        entity.components.set(OpacityComponent(opacity: 1.0))
+        for step in 0..<steps {
+            guard entity.parent != nil else { return }
+            let t = Float(1.0 - Double(step + 1) / Double(steps))
+            entity.components.set(OpacityComponent(opacity: t))
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+        entity.removeFromParent()
+    }
+
+    private func fadeOutEntity(_ entity: Entity, duration: TimeInterval = 0.35, steps: Int = 12) async {
+        let clampedSteps = max(1, steps)
+        let sleepMs = Int((duration / Double(clampedSteps)) * 1000)
+        entity.components.set(OpacityComponent(opacity: 1.0))
+        for step in 0..<clampedSteps {
+            guard entity.parent != nil else { return }
+            let t = Float(1.0 - Double(step + 1) / Double(clampedSteps))
+            entity.components.set(OpacityComponent(opacity: t))
+            try? await Task.sleep(for: .milliseconds(sleepMs))
+        }
+    }
+
+    private func collapseWall(id: UUID) async {
+        guard var wall = fireWalls[id], !wall.isCollapsing else { return }
+        wall.paletteTask?.cancel()
+        wall.isCollapsing = true
+        fireWalls[id] = wall
+
+        let steps = 14
+        let startHeight = wall.height
+        for step in 0..<steps {
+            let t = 1.0 - Float(step + 1) / Float(steps)
+            let height = max(0.1, startHeight * t)
+            wall.height = height
+            syncWallVisuals(wall: &wall)
+            fireWalls[id] = wall
+            try? await Task.sleep(for: .milliseconds(35))
+        }
+
+        stopFireWallEmission(wall.visual)
+        wall.crackleController?.fade(to: -80, duration: 0.4)
+        if let emberVisual = wall.emberVisual {
+            await fadeOutEntity(emberVisual.root, duration: 0.3)
+        } else {
+            await fadeOutEntity(wall.visual.root, duration: 0.3)
+        }
+        try? await Task.sleep(for: .milliseconds(150))
+        wall.crackleController?.stop()
+        wall.crackleController = nil
+        wall.visual.root.removeFromParent()
+        if let emberVisual = wall.emberVisual {
+            emberVisual.root.removeFromParent()
+        }
+        if let audioEntity = wall.audioEntity {
+            audioEntity.removeFromParent()
+        }
+        fireWalls.removeValue(forKey: id)
+        clearWallSelection(resetPalette: true)
+        setWallPaletteTarget(id: nil, state: .idle)
+    }
+
+    private func stopFireWallEmission(_ visual: FireWallVisual) {
+        if var emitter = visual.coreEmitter.components[ParticleEmitterComponent.self] {
+            emitter.mainEmitter.birthRate = 0
+            visual.coreEmitter.components.set(emitter)
+        }
+        if var emitter = visual.bodyEmitter.components[ParticleEmitterComponent.self] {
+            emitter.mainEmitter.birthRate = 0
+            visual.bodyEmitter.components.set(emitter)
+        }
+        if var emitter = visual.sparksEmitter.components[ParticleEmitterComponent.self] {
+            emitter.mainEmitter.birthRate = 0
+            visual.sparksEmitter.components.set(emitter)
+        }
+        if var emitter = visual.smokeEmitter.components[ParticleEmitterComponent.self] {
+            emitter.mainEmitter.birthRate = 0
+            visual.smokeEmitter.components.set(emitter)
+        }
+    }
+
+    private func paletteForState(_ state: FireWallPaletteState) -> FireWallPalette {
+        switch state {
+        case .idle:
+            return defaultFireWallPalette()
+        case .selecting:
+            return selectingFireWallPalette()
+        case .editing:
+            return highlightFireWallPalette()
+        }
+    }
+
+    private func setWallPaletteTarget(id: UUID?, state: FireWallPaletteState) {
+        let wallIDs = Array(fireWalls.keys)
+        for wallID in wallIDs {
+            guard var wall = fireWalls[wallID] else { continue }
+            let newState: FireWallPaletteState = wallID == id ? state : .idle
+            guard wall.paletteState != newState else { continue }
+
+            wall.paletteTask?.cancel()
+            let fromPalette = paletteForState(wall.paletteState)
+            let toPalette = paletteForState(newState)
+
+            wall.paletteState = newState
+            wall.paletteTask = Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                let steps = 12
+                for step in 0..<steps {
+                    guard !Task.isCancelled else { return }
+                    let t = Float(step + 1) / Float(steps)
+                    let palette = lerpFireWallPalette(from: fromPalette, to: toPalette, t: t)
+                    applyFireWallPalette(wall.visual, palette: palette)
+                    try? await Task.sleep(for: .milliseconds(35))
+                }
+            }
+            fireWalls[wallID] = wall
+        }
+    }
+
+    private func syncWallVisuals(wall: inout FireWallState) {
+        if wall.audioEntity == nil {
+            wall.audioEntity = Entity()
+            wall.audioEntity?.name = "FireWallAudio"
+            if let audioEntity = wall.audioEntity {
+                audioEntity.position = wall.basePosition
+                rootEntity.addChild(audioEntity)
+                if let crackle = crackleSound {
+                    let controller = audioEntity.playAudio(crackle)
+                    controller.gain = -80
+                    controller.fade(to: wallCrackleGain(for: wall.height), duration: 0.4)
+                    wall.crackleController = controller
+                }
+            }
+        }
+
+        wall.visual.root.transform = makeBasisTransform(
+            position: wall.basePosition,
+            lineDirection: wall.lineDirection,
+            planeNormal: wall.planeNormal
+        )
+        wall.audioEntity?.position = wall.basePosition
+        if let controller = wall.crackleController {
+            controller.gain = wallCrackleGain(for: wall.height)
+        }
+
+        let shouldShowEmbers = wall.height <= GestureConstants.wallEmberHeight
+        if shouldShowEmbers {
+            if wall.emberVisual == nil {
+                let emberVisual = createEmberLineEffect(width: wall.width)
+                wall.emberVisual = emberVisual
+                rootEntity.addChild(emberVisual.root)
+            }
+            wall.visual.root.isEnabled = false
+            if let emberVisual = wall.emberVisual {
+                emberVisual.root.isEnabled = true
+                emberVisual.root.transform = makeBasisTransform(
+                    position: wall.basePosition + wall.planeNormal * GestureConstants.wallEmberOffset,
+                    lineDirection: wall.lineDirection,
+                    planeNormal: wall.planeNormal
+                )
+                updateEmberLineEffect(emberVisual, width: wall.width)
+            }
+            wall.isEmberMode = true
+        } else {
+            if wall.isEmberMode, let emberVisual = wall.emberVisual {
+                emberVisual.root.removeFromParent()
+            }
+            wall.emberVisual = nil
+            wall.visual.root.isEnabled = true
+            wall.isEmberMode = false
+            updateFireWallEffect(wall.visual, width: wall.width, height: wall.height)
+        }
+    }
+
+    private func clearWallSelection(resetPalette: Bool) {
+        guard wallSelectionCandidate != nil || selectedWallID != nil else { return }
+        wallSelectionCandidate = nil
+        selectedWallID = nil
+        if resetPalette {
+            setWallPaletteTarget(id: nil, state: .idle)
+        }
+    }
+
+    private func updateWallSelection(now: TimeInterval, wallID: UUID) {
+        if selectedWallID == wallID {
+            if wallSelectionCandidate?.id != wallID {
+                wallSelectionCandidate = (wallID, now)
+            }
+            return
+        }
+
+        if let candidate = wallSelectionCandidate, candidate.id == wallID {
+            if now - candidate.startTime >= GestureConstants.wallSelectionHoldDuration {
+                selectedWallID = wallID
+                setWallPaletteTarget(id: wallID, state: .selecting)
+            }
+        } else {
+            wallSelectionCandidate = (wallID, now)
+            if selectedWallID != nil {
+                selectedWallID = nil
+                setWallPaletteTarget(id: nil, state: .idle)
+            }
+        }
+    }
+
+    private func selectWallByGaze(deviceTransform: simd_float4x4?) -> UUID? {
+        guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return nil }
+        let origin = pose.position
+        let direction = pose.forward
+
+        var closestID: UUID?
+        var closestDistance = GestureConstants.wallSelectionMaxDistance
+
+        for (wallID, wall) in fireWalls {
+            guard !wall.isCollapsing else { continue }
+
+            let denom = simd_dot(direction, wall.wallNormal)
+            if abs(denom) < 0.001 {
+                continue
+            }
+            let t = simd_dot(wall.basePosition - origin, wall.wallNormal) / denom
+            if t < 0 || t > closestDistance {
+                continue
+            }
+
+            let hitPoint = origin + direction * t
+            let local = hitPoint - wall.basePosition
+            let x = simd_dot(local, wall.lineDirection)
+            let y = simd_dot(local, wall.planeNormal)
+
+            if abs(x) <= wall.width * 0.5 && y >= 0 && y <= wall.height {
+                closestDistance = t
+                closestID = wallID
+            }
+        }
+
+        return closestID
+    }
+
+    private func gazeGroundHit(deviceTransform: simd_float4x4?) -> CollisionSystem.HitResult? {
+        guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return nil }
+        guard let hit = CollisionSystem.raycastBeam(
+            origin: pose.position,
+            direction: pose.forward,
+            maxDistance: GestureConstants.wallPlacementMaxDistance,
+            meshCache: persistentMeshCache
+        ) else {
+            return nil
+        }
+
+        let worldUp = SIMD3<Float>(0, 1, 0)
+        var normal = simd_normalize(hit.normal)
+        if simd_dot(normal, worldUp) < 0 {
+            normal = -normal
+        }
+        guard simd_dot(normal, worldUp) > 0.85 else { return nil }
+        return CollisionSystem.HitResult(position: hit.position, normal: worldUp)
+    }
+
+    private func getDevicePose(deviceTransform: simd_float4x4?) -> (position: SIMD3<Float>, forward: SIMD3<Float>, right: SIMD3<Float>)? {
+        guard let deviceTransform = deviceTransform else { return nil }
+        let position = SIMD3<Float>(
+            deviceTransform.columns.3.x,
+            deviceTransform.columns.3.y,
+            deviceTransform.columns.3.z
+        )
+        let forward = simd_normalize(SIMD3<Float>(
+            -deviceTransform.columns.2.x,
+            -deviceTransform.columns.2.y,
+            -deviceTransform.columns.2.z
+        ))
+        let right = simd_normalize(SIMD3<Float>(
+            deviceTransform.columns.0.x,
+            deviceTransform.columns.0.y,
+            deviceTransform.columns.0.z
+        ))
+        return (position, forward, right)
+    }
+
+    private func computeLineDirection(
+        planeNormal: SIMD3<Float>,
+        deviceForward: SIMD3<Float>,
+        deviceRight: SIMD3<Float>
+    ) -> SIMD3<Float> {
+        let normal = simd_normalize(planeNormal)
+        let forwardProjected = deviceForward - normal * simd_dot(deviceForward, normal)
+        let forwardLength = simd_length(forwardProjected)
+        let fallbackProjected = deviceRight - normal * simd_dot(deviceRight, normal)
+
+        let forwardOnPlane: SIMD3<Float>
+        if forwardLength > 0.05 {
+            forwardOnPlane = simd_normalize(forwardProjected)
+        } else if simd_length(fallbackProjected) > 0.05 {
+            forwardOnPlane = simd_normalize(fallbackProjected)
+        } else {
+            forwardOnPlane = SIMD3<Float>(1, 0, 0)
+        }
+
+        let lineDirection = simd_cross(normal, forwardOnPlane)
+        return simd_length(lineDirection) > 0.01 ? simd_normalize(lineDirection) : SIMD3<Float>(1, 0, 0)
+    }
+
+    private func makeBasisTransform(
+        position: SIMD3<Float>,
+        lineDirection: SIMD3<Float>,
+        planeNormal: SIMD3<Float>
+    ) -> Transform {
+        var xAxis = simd_normalize(lineDirection)
+        var yAxis = simd_normalize(planeNormal)
+        var zAxis = simd_cross(xAxis, yAxis)
+        if simd_length(zAxis) < 0.001 {
+            zAxis = simd_cross(xAxis, SIMD3<Float>(0, 1, 0))
+        }
+        zAxis = simd_normalize(zAxis)
+        xAxis = simd_normalize(simd_cross(yAxis, zAxis))
+
+        let matrix = simd_float4x4(
+            SIMD4<Float>(xAxis, 0),
+            SIMD4<Float>(yAxis, 0),
+            SIMD4<Float>(zAxis, 0),
+            SIMD4<Float>(position, 1)
+        )
+        return Transform(matrix: matrix)
+    }
+
+    private func rotate(direction: SIMD3<Float>, around axis: SIMD3<Float>, angle: Float) -> SIMD3<Float> {
+        guard simd_length(direction) > 0.001, simd_length(axis) > 0.001 else { return direction }
+        let rotation = simd_quatf(angle: angle, axis: simd_normalize(axis))
+        return simd_normalize(rotation.act(direction))
+    }
+
+    private func normalizedWallNormal(lineDirection: SIMD3<Float>, planeNormal: SIMD3<Float>) -> SIMD3<Float> {
+        let normal = simd_cross(lineDirection, planeNormal)
+        if simd_length(normal) < 0.001 {
+            return SIMD3<Float>(0, 0, 1)
+        }
+        return simd_normalize(normal)
     }
 
     // MARK: - Gaze Direction

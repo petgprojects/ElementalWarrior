@@ -1477,6 +1477,12 @@ final class HandTrackingManager {
         max(minValue, min(value, maxValue))
     }
 
+    private func areBothFistsHeld(now: TimeInterval) -> Bool {
+        let leftFresh = now - leftFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        let rightFresh = now - rightFistSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
+        return leftFresh && rightFresh && leftFistSnapshot.isFist && rightFistSnapshot.isFist
+    }
+
     private func updateFistSnapshot(isLeft: Bool, isFist: Bool, timestamp: TimeInterval) {
         if isLeft {
             leftFistSnapshot.isFist = isFist
@@ -1505,6 +1511,28 @@ final class HandTrackingManager {
             bothFistsStartTime = nil
         }
         return false
+    }
+
+    private func mappedWallHeight(
+        avgHandHeight: Float,
+        deviceTransform: simd_float4x4?,
+        fallbackBaseHeight: Float,
+        fallbackWallHeight: Float
+    ) -> Float {
+        guard let pose = getDevicePose(deviceTransform: deviceTransform) else {
+            let heightDelta = (avgHandHeight - fallbackBaseHeight) * GestureConstants.wallHeightScale
+            return clamp(
+                fallbackWallHeight + heightDelta,
+                min: 0.05,
+                max: GestureConstants.wallMaxHeight
+            )
+        }
+
+        let low = pose.position.y + GestureConstants.wallHeightReferenceLowOffset
+        let high = pose.position.y + GestureConstants.wallHeightReferenceHighOffset
+        let denom = max(0.05, high - low)
+        let t = clamp((avgHandHeight - low) / denom, min: 0.0, max: 1.0)
+        return max(0.05, t * GestureConstants.wallMaxHeight)
     }
 
     private func checkZombiePoseHand(
@@ -1555,6 +1583,7 @@ final class HandTrackingManager {
         let leftFresh = now - leftPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
         let rightFresh = now - rightPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow
         let handsFresh = leftFresh && rightFresh
+        let isHoldingFists = areBothFistsHeld(now: now)
 
         if didConfirm {
             if let placement = emberPlacement {
@@ -1587,10 +1616,14 @@ final class HandTrackingManager {
             return
         }
 
-        guard poseAllowed, poseActive else {
-            clearWallSelection(resetPalette: true)
+        guard poseAllowed else {
+            if !isHoldingFists {
+                clearWallSelection(resetPalette: true)
+            }
             return
         }
+
+        guard poseActive else { return }
 
         if let wallID = selectWallByGaze(deviceTransform: deviceTransform) {
             updateWallSelection(now: now, wallID: wallID)
@@ -1657,10 +1690,11 @@ final class HandTrackingManager {
     }
 
     private func beginWallEdit(from placement: EmberPlacementState, avgHandHeight: Float, deviceTransform: simd_float4x4?) async {
-        let height = clamp(
-            (avgHandHeight - placement.baseHandHeight) * GestureConstants.wallHeightScale,
-            min: GestureConstants.wallMinHeight,
-            max: GestureConstants.wallMaxHeight
+        let height = mappedWallHeight(
+            avgHandHeight: avgHandHeight,
+            deviceTransform: deviceTransform,
+            fallbackBaseHeight: placement.baseHandHeight,
+            fallbackWallHeight: 0.0
         )
 
         let wallID = UUID()
@@ -1784,11 +1818,11 @@ final class HandTrackingManager {
         )
 
         let avgHeight = (leftPos.y + rightPos.y) * 0.5
-        let heightDelta = (avgHeight - edit.baseHandHeight) * GestureConstants.wallHeightScale
-        let targetHeight = clamp(
-            edit.baseWallHeight + heightDelta,
-            min: 0.05,
-            max: GestureConstants.wallMaxHeight
+        let targetHeight = mappedWallHeight(
+            avgHandHeight: avgHeight,
+            deviceTransform: deviceTransform,
+            fallbackBaseHeight: edit.baseHandHeight,
+            fallbackWallHeight: edit.baseWallHeight
         )
 
         wall.basePosition = targetCenter

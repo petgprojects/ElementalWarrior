@@ -141,6 +141,8 @@ enum GestureConstants {
     static let wallMinHeight: Float = 0.4                     // meters minimum wall height
     static let wallEmberHeight: Float = 0.12                  // meters considered ember height for despawn
     static let wallMaxHeight: Float = 3.2                     // meters maximum wall height
+    static let wallHeightReferenceLowOffset: Float = -0.25    // meters below device position for 0% height
+    static let wallHeightReferenceHighOffset: Float = 0.08    // meters above device position for 100% height
     static let wallFinalizeDropThreshold: Float = 0.1         // meters below base to lock wall height
     static let wallRemovalDropThreshold: Float = 0.12         // meters below base to drop wall
     static let wallSelectionMaxDistance: Float = 6.0          // meters max gaze selection distance

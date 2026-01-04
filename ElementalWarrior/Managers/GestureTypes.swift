@@ -114,6 +114,7 @@ enum GestureConstants {
 
     // Combined flamethrower constants
     static let flamethrowerCombineDistance: Float = 0.15      // meters to combine flamethrowers (same as fireballs)
+    static let flamethrowerSplitDistance: Float = 0.25        // meters to split combined flamethrower (larger for hysteresis)
     static let combinedFlamethrowerJetIntensity: Float = 1.5  // jet intensity multiplier when combined
     static let combinedFlamethrowerMuzzleScale: Float = 1.0   // full-size muzzle when combined (vs 0.5 for single)
     static let combinedFlamethrowerAudioBoost: Double = 3.0   // dB boost for combined flamethrower sound

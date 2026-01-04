@@ -172,6 +172,8 @@ struct HomeView: View {
             return .orange
         case .collision:
             return .green
+        case .flamethrower:
+            return .cyan
         }
     }
 
@@ -184,4 +186,3 @@ struct HomeView: View {
         return fireball
     }
 }
-

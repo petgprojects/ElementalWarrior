@@ -48,6 +48,8 @@ The app uses a dual-space architecture:
 - Punch detection: fist gesture + velocity threshold (0.3 m/s) to launch fireballs
 - Cross-hand punch support (punch with opposite hand)
 - **Mega fireball combining**: When both hands have fireballs and they come within 15cm, they combine into a 2x mega fireball with scaled explosions, scorch marks, and louder audio
+- **Flamethrower mode**: "Stop" gesture (palm facing away, fingers up) activates continuous flame stream
+- **Combined flamethrower**: When both hands use flamethrowers and come within 15cm, they merge into a single enhanced stream; separating hands splits back into two streams
 - Gaze-based targeting using device head direction
 - Projectile flight at 12 m/s with 20m max range
 - **Persistent mesh collision system** - scanned geometry stays in memory even when out of LiDAR range
@@ -56,8 +58,9 @@ The app uses a dual-space architecture:
 **GestureTypes** (Managers/GestureTypes.swift)
 - Shared data structures: `HandGestureState`, `HandState`, `ProjectileState`, `CachedMeshGeometry`
 - `HandState.isMegaFireball` - Tracks whether the hand is holding a combined mega fireball
+- `HandState.isPartOfCombinedFlamethrower` - Tracks whether this hand's flamethrower is merged
 - `ProjectileState.isMegaFireball` - Tracks mega state for projectiles in flight
-- `GestureConstants` enum with all timing and threshold values including mega fireball constants (combine distance, scale multipliers, audio boost)
+- `GestureConstants` enum with all timing and threshold values including mega fireball constants (combine distance, scale multipliers, audio boost) and combined flamethrower constants
 
 **GestureDetection** (Managers/GestureDetection.swift)
 - Multi-signal fist detection using 4 methods:
@@ -103,10 +106,19 @@ The app uses a dual-space architecture:
 - Lingering smoke particle effect rising from impact
 - 16-second lifetime with 1-second fade out
 
+**FlamethrowerEffects.swift**
+- `createFlamethrowerStream(scale:muzzleScale:jetIntensityMultiplier:)` - Multi-layer flamethrower stream (5 layers: core jet, body jet, sparks, heat smoke, muzzle flash)
+- `muzzleScale` parameter: 0.5 for single-hand (50% size), 1.0 for combined
+- `jetIntensityMultiplier` parameter: 1.0 for single-hand, 1.5 for combined flamethrower
+- `createCombinedFlamethrowerStream()` - Convenience function with enhanced settings for merged stream
+- `createFlamethrowerShutdownSmoke()` - Smoke puff when flamethrower stops
+- Includes PointLight component for environmental lighting
+
 ### Audio System
 
 **Sound Effects**
 - Fire crackle (looping) - Plays while holding fireball, fades in/out
+- Flamethrower sound (looping) - Plays during flame stream, audio boost when combined
 - Woosh sound - Plays on fireball launch
 - Explosion sound - Plays on impact
 
@@ -130,6 +142,11 @@ The system detects multiple gestures using the `GestureDetection` module:
    - Fist + velocity >0.3 m/s + proximity within 20cm of fireball
    - Supports cross-hand punching (punch with opposite hand)
 
+4. **Flamethrower Gesture** - Activates continuous flame stream
+   - "Stop" sign gesture: palm facing away from user, fingers pointing up
+   - Palm forward dot product threshold for alignment with gaze direction
+   - Cancels any active fireball when activated
+
 ### Entity State Management
 
 **Per-hand state tracking (HandState struct):**
@@ -142,6 +159,10 @@ The system detects multiple gestures using the `GestureDetection` module:
 - `lastKnownPosition: SIMD3<Float>?` - Position before tracking loss
 - `isTrackingLost: Bool` - Whether hand tracking was lost
 - `crackleController: AudioPlaybackController?` - Looping audio controller
+- `flamethrower: Entity?` - Reference to active flamethrower stream
+- `flamethrowerAudio: AudioPlaybackController?` - Looping flamethrower audio
+- `isUsingFlamethrower: Bool` - Whether flamethrower is currently active
+- `isPartOfCombinedFlamethrower: Bool` - True when merged with other hand's flamethrower
 
 **State transitions:**
 - Spawn: 0.5s scale animation (0.01 → 1.0) with audio fade-in
@@ -228,7 +249,8 @@ ElementalWarrior/
 └── Effects/
     ├── FireballEffects.swift       # Fireball, trail, and smoke puff effects
     ├── ExplosionEffects.swift      # Multi-layer explosion particles
-    └── ScorchMarkEffects.swift     # Procedural scorch marks with ember glow
+    ├── ScorchMarkEffects.swift     # Procedural scorch marks with ember glow
+    └── FlamethrowerEffects.swift   # Multi-layer flamethrower stream effects
 ```
 
 ## Reality Composer Pro Assets

@@ -40,14 +40,19 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Fireballs explode on impact with walls/surfaces or after 20m max range
   - Smooth spawn/extinguish animations with smoke puffs
   - Dynamic point lighting from fireballs
+  - **Flamethrower Mode**: Open hand in "stop" gesture (palm facing away, fingers up) to shoot a continuous flame stream from your palm
+  - **Combined Flamethrower**: When using flamethrowers with both hands, bring hands together (within 15cm) to merge into a single powerful combined stream with enhanced visuals and audio; separating hands splits back into individual streams
 - **Audio System**:
   - Fire crackle sound (looping) while holding fireballs with fade in/out
+  - Flamethrower sound (looping) during flame stream with audio boost when combined
   - Woosh sound on fireball launch
   - Explosion sound on impact
 - **Visual Effects**:
   - Four-layer particle system for realistic fire (hot core, inner flame, spikes, outer flame)
   - Fire trail effect on flying projectiles
   - Five-layer explosion effect (white flash, yellow core, orange flame, red outer, smoke)
+  - **Multi-layer flamethrower stream** (core jet, body jet, sparks, heat smoke, muzzle flash)
+  - Combined flamethrower with enhanced particle intensity and larger muzzle flash
   - Smoke puff effects when fireballs extinguish
   - **Procedural scorch marks** with animated ember glow, multi-layer textures, and lingering smoke
   - Dynamic explosion lighting with fade animation
@@ -109,6 +114,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **FireballEffects**: Fireball, trail, and smoke puff particle effects
 - **ExplosionEffects**: Multi-layer explosion with dynamic lighting
 - **ScorchMarkEffects**: Procedural scorch marks with ember glow animation
+- **FlamethrowerEffects**: Multi-layer flamethrower stream with configurable muzzle and jet intensity for single/combined modes
 
 #### State Management
 
@@ -156,7 +162,8 @@ ElementalWarrior/
 │   └── Effects/
 │       ├── FireballEffects.swift       # Fireball and trail particles
 │       ├── ExplosionEffects.swift      # Explosion particle effects
-│       └── ScorchMarkEffects.swift     # Procedural scorch marks
+│       ├── ScorchMarkEffects.swift     # Procedural scorch marks
+│       └── FlamethrowerEffects.swift   # Flamethrower stream effects
 ├── RealityAssetStuff/                  # Reality Composer Pro project (experimental)
 ├── CLAUDE.md                           # Developer guidance for AI assistants
 └── ElementalWarrior.xcodeproj/         # Xcode project
@@ -187,7 +194,9 @@ ElementalWarrior/
 5. **Mega fireball**: Spawn fireballs in both hands, then bring them together (within 15cm) to combine into a mega fireball with 2x size, bigger explosions, and louder sounds!
 6. Fireballs fly toward where you're looking and explode on impact with scorch marks
 7. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
-8. Click "Quit Immersion" to return to the home view
+8. **Flamethrower**: Hold your hand in a "stop" gesture (palm facing away from you, fingers up) to shoot a continuous flame stream
+9. **Combined Flamethrower**: Use flamethrowers with both hands and bring them together to create a more powerful combined stream; separate hands to split back into two streams
+10. Click "Quit Immersion" to return to the home view
 
 ## Development Roadmap
 

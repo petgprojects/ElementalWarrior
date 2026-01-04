@@ -142,6 +142,39 @@ func createScorchMark(scale: Float = 1.0) -> Entity {
     return entity
 }
 
+/// Simpler soot mark for flamethrower impacts (no glow or smoke)
+/// - Parameter scale: Scale multiplier for the mark size
+@MainActor
+func createFlamethrowerScorchMark(scale: Float = 1.0) -> Entity {
+    let entity = Entity()
+    entity.name = "FlamethrowerScorch"
+
+    let mesh = generateIrregularSootMesh(scale: scale)
+
+    // Reuse cached gradient texture for soft, organic edges
+    if cachedScorchTexture == nil {
+        cachedScorchTexture = generateRadialGradientTexture()
+    }
+
+    var material = UnlitMaterial()
+    if let texture = cachedScorchTexture {
+        material.color = .init(
+            tint: rgba(0.04, 0.04, 0.04, 0.95),
+            texture: .init(texture)
+        )
+    } else {
+        material.color = .init(tint: rgba(0.04, 0.04, 0.04, 0.95))
+    }
+    material.blending = .transparent(opacity: .init(floatLiteral: 0.75))
+
+    let model = ModelEntity(mesh: mesh, materials: [material])
+    let randomAngle = Float.random(in: 0...(.pi * 2))
+    model.orientation = simd_quatf(angle: randomAngle, axis: [0, 0, 1])
+    entity.addChild(model)
+
+    return entity
+}
+
 // MARK: - Irregular Soot Mesh Generation
 
 /// Generate a unique irregular soot mark mesh with organic edge variation

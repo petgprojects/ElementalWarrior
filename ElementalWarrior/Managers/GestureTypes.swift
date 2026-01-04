@@ -18,6 +18,7 @@ enum HandGestureState: String {
     case summon = "SUMMON"
     case holdingFireball = "HOLDING"
     case collision = "COLLISION"
+    case flamethrower = "FLAME"
 }
 
 // MARK: - Per-Hand State
@@ -27,6 +28,16 @@ struct HandState {
     var fireball: Entity?
     var isShowingFireball: Bool = false
     var isAnimating: Bool = false
+
+    // Flamethrower stream state
+    var flamethrower: Entity?
+    var flamethrowerAudio: AudioPlaybackController?
+    var isUsingFlamethrower: Bool = false
+    var lastFlamethrowerScorchTime: TimeInterval = 0
+    var lastFlamethrowerHitDistance: Float = GestureConstants.flamethrowerRange
+    var lastFlamethrowerRaycastTime: TimeInterval = 0
+    var flamethrowerDespawnTask: Task<Void, Never>?
+    var isPartOfCombinedFlamethrower: Bool = false  // True when this hand's flamethrower is merged
 
     // Fields for throwing system
     var despawnTask: Task<Void, Never>?
@@ -90,4 +101,21 @@ enum GestureConstants {
     static let megaExplosionScale: Float = 2.0                // scale multiplier for explosion
     static let megaScorchScale: Float = 2.0                   // scale multiplier for scorch mark
     static let megaAudioGainBoost: Double = 6.0               // dB boost for mega sounds
+
+    // Flamethrower constants
+    static let flamethrowerRange: Float = 8.0                 // meters max flame reach
+    static let flamethrowerForwardDotThreshold: Float = 0.28  // palm alignment with gaze (lower = more forgiving)
+    static let flamethrowerUpRejectThreshold: Float = 0.6     // allow more tilt before rejecting
+    static let flamethrowerScorchCooldown: TimeInterval = 0.35 // seconds between scorch spawns
+    static let flamethrowerScorchScale: Float = 0.55          // default scorch size for flame hits
+    static let flamethrowerScorchLifetime: TimeInterval = 6.0 // seconds before scorch fades
+    static let flamethrowerRaycastInterval: TimeInterval = 0.04 // seconds between beam raycasts (per hand)
+    static let flamethrowerTrackingGraceDuration: TimeInterval = 0.5 // seconds before despawn after tracking loss
+
+    // Combined flamethrower constants
+    static let flamethrowerCombineDistance: Float = 0.15      // meters to combine flamethrowers (same as fireballs)
+    static let flamethrowerSplitDistance: Float = 0.25        // meters to split combined flamethrower (larger for hysteresis)
+    static let combinedFlamethrowerJetIntensity: Float = 1.5  // jet intensity multiplier when combined
+    static let combinedFlamethrowerMuzzleScale: Float = 1.0   // full-size muzzle when combined (vs 0.5 for single)
+    static let combinedFlamethrowerAudioBoost: Double = 3.0   // dB boost for combined flamethrower sound
 }

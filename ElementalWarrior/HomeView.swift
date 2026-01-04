@@ -174,6 +174,8 @@ struct HomeView: View {
             return .green
         case .flamethrower:
             return .cyan
+        case .wallControl:
+            return .blue
         }
     }
 

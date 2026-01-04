@@ -19,6 +19,7 @@ enum HandGestureState: String {
     case holdingFireball = "HOLDING"
     case collision = "COLLISION"
     case flamethrower = "FLAME"
+    case wallControl = "WALL"
 }
 
 // MARK: - Per-Hand State
@@ -118,4 +119,28 @@ enum GestureConstants {
     static let combinedFlamethrowerJetIntensity: Float = 1.5  // jet intensity multiplier when combined
     static let combinedFlamethrowerMuzzleScale: Float = 1.0   // full-size muzzle when combined (vs 0.5 for single)
     static let combinedFlamethrowerAudioBoost: Double = 3.0   // dB boost for combined flamethrower sound
+
+    // Wall of fire constants
+    static let zombiePosePalmDownDotThreshold: Float = -0.2   // palm normal dot with world up for palms-down
+    static let zombiePoseForwardDotThreshold: Float = 0.0     // hand position forward alignment with gaze
+    static let zombiePoseMinForwardDistance: Float = 0.12     // meters in front of head for zombie pose
+    static let zombiePoseMinDownAngleDegrees: Float = 45.0    // degrees from world-down to require arms extended
+    static let zombiePoseUpdateWindow: TimeInterval = 0.25    // seconds between both hand updates
+    static let wallControlGraceDuration: TimeInterval = 0.25  // seconds of grace for pose flicker
+    static let wallPlacementMinWidth: Float = 0.4             // meters minimum wall width
+    static let wallPlacementMaxWidth: Float = 3.5             // meters maximum wall width
+    static let wallPlacementSmoothing: Float = 0.25           // smoothing factor for ember line updates
+    static let wallPlacementMoveScale: Float = 3.5            // scaling factor for ember line translation
+    static let wallPlacementWidthScale: Float = 3.0           // scaling factor for ember line width
+    static let wallPlacementRotationScale: Float = 2.0        // radians per meter for wall rotation
+    static let wallPlacementRotationMaxRadians: Float = 1.2   // max rotation in either direction
+    static let wallEmberOffset: Float = 0.01                  // meters above ground for embers
+    static let wallPlacementMaxDistance: Float = 6.0          // meters for gaze placement raycast
+    static let wallRaiseStartThreshold: Float = 0.12          // meters above base to start wall growth
+    static let wallHeightScale: Float = 7.0                   // meters of wall per meter of hand raise
+    static let wallMinHeight: Float = 0.4                     // meters minimum wall height
+    static let wallMaxHeight: Float = 3.2                     // meters maximum wall height
+    static let wallFinalizeDropThreshold: Float = 0.1         // meters below base to lock wall height
+    static let wallRemovalDropThreshold: Float = 0.12         // meters below base to drop wall
+    static let wallSelectionMaxDistance: Float = 6.0          // meters max gaze selection distance
 }

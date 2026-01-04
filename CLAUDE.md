@@ -50,6 +50,7 @@ The app uses a dual-space architecture:
 - **Mega fireball combining**: When both hands have fireballs and they come within 15cm, they combine into a 2x mega fireball with scaled explosions, scorch marks, and louder audio
 - **Flamethrower mode**: "Stop" gesture (palm facing away, fingers up) activates continuous flame stream
 - **Combined flamethrower**: When both hands use flamethrowers and come within 15cm, they merge into a single enhanced stream; separating hands splits back into two streams
+- **Fire Wall mode**: "Zombie pose" gesture (arms extended, palms down, hands open) creates a defensive fire wall on the ground
 - Gaze-based targeting using device head direction
 - Projectile flight at 12 m/s with 20m max range
 - **Persistent mesh collision system** - scanned geometry stays in memory even when out of LiDAR range
@@ -60,7 +61,10 @@ The app uses a dual-space architecture:
 - `HandState.isMegaFireball` - Tracks whether the hand is holding a combined mega fireball
 - `HandState.isPartOfCombinedFlamethrower` - Tracks whether this hand's flamethrower is merged
 - `ProjectileState.isMegaFireball` - Tracks mega state for projectiles in flight
-- `GestureConstants` enum with all timing and threshold values including mega fireball constants (combine distance, scale multipliers, audio boost) and combined flamethrower constants
+- `FireWallColorState` enum - Color states for fire walls (blue=editing, redOrange=confirmed, green=selected)
+- `FireWallState` struct - Tracks wall entity, position, rotation, width, height, color state, and audio
+- `FireWallEditingState` struct - Tracks active editing session, current wall ID, hand positions
+- `GestureConstants` enum with all timing and threshold values including mega fireball constants (combine distance, scale multipliers, audio boost), combined flamethrower constants, and fire wall constants (dimensions, zombie pose thresholds, rotation limits, selection timing)
 
 **GestureDetection** (Managers/GestureDetection.swift)
 - Multi-signal fist detection using 4 methods:
@@ -69,6 +73,13 @@ The app uses a dual-space architecture:
   3. Hand compactness ratio
   4. Fingertip clustering
 - Open palm detection (palm orientation + finger extension)
+- Zombie pose detection (for fire walls):
+  - `checkPalmFacingDown()` - Palm normal dot product with world down vector
+  - `checkArmExtended()` - Hand position forward from chest
+  - `checkZombiePose()` - Combined check for both hands in zombie pose
+  - `calculateHeightPercent()` - Maps arm elevation (chest to eye) to 0-1
+  - `calculateHandSeparation()` - Horizontal distance between hands for wall width
+  - `calculateWallRotation()` - Rotation from hand forward offset (left forward=CCW, right forward=CW)
 - Position and velocity calculation helpers
 
 **CollisionSystem** (Managers/CollisionSystem.swift)
@@ -114,6 +125,19 @@ The app uses a dual-space architecture:
 - `createFlamethrowerShutdownSmoke()` - Smoke puff when flamethrower stops
 - Includes PointLight component for environmental lighting
 
+**FireWallEffects.swift**
+- `createFireWall(width:height:colorState:)` - Multi-layer fire wall with dynamic height scaling
+- Color palettes for three states: blue (editing), red/orange (confirmed), green (selected)
+- `createEmberLine()` - Ground-level spark line along wall base (always visible)
+- `createFlameBase()` - Wide, slow base flames (bright core)
+- `createFlameBody()` - Medium-speed main flame layer
+- `createFlameTips()` - Fast, chaotic flame tips
+- `createWallSmoke()` - Rising smoke above flames
+- `createFireWallDespawnSmoke()` - One-shot smoke burst for despawn effect
+- Dynamic point lights distributed along wall length
+- Box emitter shapes with width parameter for wall length
+- Height-based particle lifespan and speed scaling
+
 ### Audio System
 
 **Sound Effects**
@@ -147,6 +171,21 @@ The system detects multiple gestures using the `GestureDetection` module:
    - Palm forward dot product threshold for alignment with gaze direction
    - Cancels any active fireball when activated
 
+5. **Zombie Pose** - Creates fire wall (requires both hands)
+   - Both arms extended forward from chest (>35cm forward)
+   - Both palms facing down (palm normal dot product >0.5 with world down)
+   - Both hands open (not fists)
+   - Height controlled by arm elevation (chest=0%, eye=100%)
+   - Width controlled by hand separation (20cm min to 4m max)
+   - Rotation controlled by hand forward offset (±90°)
+   - Cancels fireballs and flamethrowers when activated
+
+6. **Simultaneous Fist Confirmation** - Confirms fire wall
+   - Both hands make fists within 200ms window
+   - While editing (blue wall): Confirms wall (blue→red/orange)
+   - While wall selected (green): Enters edit mode (green→blue)
+   - While editing at minimum height: Despawns wall with smoke
+
 ### Entity State Management
 
 **Per-hand state tracking (HandState struct):**
@@ -170,6 +209,34 @@ The system detects multiple gestures using the `GestureDetection` module:
 - Extinguish: 0.25s shrink + smoke puff particle burst + audio fade-out
 - Force extinguish: Immediate removal with smoke (used when tracking is lost after 2s grace)
 - Launch: Detach from hand, add trail effect, play woosh, fly toward gaze at 12 m/s
+
+### Fire Wall State Management
+
+**Fire wall properties (in HandTrackingManager):**
+- `confirmedFireWalls: [UUID: FireWallState]` - Dictionary of confirmed (locked) walls
+- `editingWallState: FireWallEditingState` - Current editing session state
+- `gazeSelectedWallID: UUID?` - Wall currently being looked at
+- `gazeSelectionStartTime: TimeInterval?` - When gaze dwell started
+- `leftFistTime/rightFistTime: TimeInterval?` - For simultaneous fist detection
+
+**Fire wall lifecycle:**
+1. **Create**: Zombie pose spawns blue wall at gaze floor position
+2. **Edit**: Adjust height/width/rotation/position with hand movements
+3. **Confirm**: Simultaneous fists transition blue→red/orange, wall locks in place
+4. **Select**: Gaze dwell (0.5s) on confirmed wall turns it green
+5. **Re-edit**: Simultaneous fists on green wall transitions to blue for editing
+6. **Despawn**: Minimum height + fists triggers smoke effect and removal
+
+**Color states:**
+- **Blue**: Active editing mode (being created or modified)
+- **Red/Orange**: Confirmed and locked in place
+- **Green**: Selected via gaze dwell, ready for editing or other action
+
+**Constraints:**
+- Maximum 3 confirmed walls at once
+- Wall width: 20cm to 4m
+- Wall height: 0% (embers only) to 100% (2.5m)
+- Wall rotation: ±90° from perpendicular to user
 
 ### Smoke Puff System
 
@@ -250,7 +317,8 @@ ElementalWarrior/
     ├── FireballEffects.swift       # Fireball, trail, and smoke puff effects
     ├── ExplosionEffects.swift      # Multi-layer explosion particles
     ├── ScorchMarkEffects.swift     # Procedural scorch marks with ember glow
-    └── FlamethrowerEffects.swift   # Multi-layer flamethrower stream effects
+    ├── FlamethrowerEffects.swift   # Multi-layer flamethrower stream effects
+    └── FireWallEffects.swift       # Multi-layer fire wall with color states
 ```
 
 ## Reality Composer Pro Assets

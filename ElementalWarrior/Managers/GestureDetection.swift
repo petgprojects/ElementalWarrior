@@ -253,6 +253,144 @@ enum GestureDetection {
             verticalAlignment < GestureConstants.flamethrowerUpRejectThreshold
     }
 
+    // MARK: - Zombie Pose Detection (Fire Wall)
+
+    /// Check if palm is facing downward (for zombie pose)
+    static func checkPalmFacingDown(anchor: HandAnchor, skeleton: HandSkeleton) -> Bool {
+        guard let palmNormal = getPalmNormal(anchor: anchor, skeleton: skeleton) else { return false }
+        let worldDown = SIMD3<Float>(0, -1, 0)
+        let dotProduct = simd_dot(simd_normalize(palmNormal), worldDown)
+        return dotProduct > GestureConstants.zombiePalmDownDotThreshold
+    }
+
+    /// Check if arm is extended forward from chest
+    static func checkArmExtended(
+        handPosition: SIMD3<Float>,
+        deviceTransform: simd_float4x4?
+    ) -> Bool {
+        guard let deviceTransform = deviceTransform else { return false }
+
+        // Estimate chest position (below and slightly behind head)
+        let headPosition = extractPosition(from: deviceTransform)
+        let chestPosition = headPosition - SIMD3<Float>(0, 0.3, 0)
+
+        // Get forward direction (horizontal only)
+        let forward = simd_normalize(SIMD3<Float>(
+            -deviceTransform.columns.2.x,
+            0,
+            -deviceTransform.columns.2.z
+        ))
+
+        // Project hand-to-chest vector onto forward direction
+        let toHand = handPosition - chestPosition
+        let forwardDistance = simd_dot(toHand, forward)
+
+        return forwardDistance > GestureConstants.zombieArmExtensionMinDistance
+    }
+
+    /// Check if both hands are in zombie pose (arms extended, palms down, hands open)
+    /// Returns tuple with pose status, hand positions, and calculated height percentage
+    static func checkZombiePose(
+        leftAnchor: HandAnchor?,
+        rightAnchor: HandAnchor?,
+        deviceTransform: simd_float4x4?
+    ) -> (isZombiePose: Bool, leftPosition: SIMD3<Float>?, rightPosition: SIMD3<Float>?, heightPercent: Float) {
+        guard let leftAnchor = leftAnchor,
+              let rightAnchor = rightAnchor,
+              let leftSkeleton = leftAnchor.handSkeleton,
+              let rightSkeleton = rightAnchor.handSkeleton,
+              leftAnchor.isTracked,
+              rightAnchor.isTracked else {
+            return (false, nil, nil, 0)
+        }
+
+        // Check both palms facing down
+        guard checkPalmFacingDown(anchor: leftAnchor, skeleton: leftSkeleton),
+              checkPalmFacingDown(anchor: rightAnchor, skeleton: rightSkeleton) else {
+            return (false, nil, nil, 0)
+        }
+
+        // Check both hands are open
+        guard checkHandIsOpen(skeleton: leftSkeleton),
+              checkHandIsOpen(skeleton: rightSkeleton) else {
+            return (false, nil, nil, 0)
+        }
+
+        // Get hand positions
+        let leftPos = getPalmPosition(anchor: leftAnchor, skeleton: leftSkeleton)
+        let rightPos = getPalmPosition(anchor: rightAnchor, skeleton: rightSkeleton)
+
+        // Check arms are extended forward
+        guard checkArmExtended(handPosition: leftPos, deviceTransform: deviceTransform),
+              checkArmExtended(handPosition: rightPos, deviceTransform: deviceTransform) else {
+            return (false, nil, nil, 0)
+        }
+
+        // Calculate height percentage from arm elevation
+        let heightPercent = calculateHeightPercent(
+            leftPos: leftPos,
+            rightPos: rightPos,
+            deviceTransform: deviceTransform
+        )
+
+        return (true, leftPos, rightPos, heightPercent)
+    }
+
+    /// Calculate wall height percentage from hand elevation (chest=0%, eye=100%)
+    static func calculateHeightPercent(
+        leftPos: SIMD3<Float>,
+        rightPos: SIMD3<Float>,
+        deviceTransform: simd_float4x4?
+    ) -> Float {
+        guard let deviceTransform = deviceTransform else { return 0.5 }
+
+        let headY = deviceTransform.columns.3.y
+        let chestY = headY + GestureConstants.zombieHandHeightChestOffset  // Below head
+        let eyeY = headY + GestureConstants.zombieHandHeightEyeOffset      // At head level
+
+        let avgHandY = (leftPos.y + rightPos.y) / 2
+        let range = eyeY - chestY
+        guard range > 0.01 else { return 0.5 }
+
+        return max(0, min(1, (avgHandY - chestY) / range))
+    }
+
+    /// Calculate horizontal distance between hands (for wall width control)
+    static func calculateHandSeparation(left: SIMD3<Float>, right: SIMD3<Float>) -> Float {
+        let dx = right.x - left.x
+        let dz = right.z - left.z
+        return sqrt(dx * dx + dz * dz)
+    }
+
+    /// Calculate wall rotation from hand forward offset
+    /// Left hand forward = counter-clockwise, right hand forward = clockwise
+    static func calculateWallRotation(
+        left: SIMD3<Float>,
+        right: SIMD3<Float>,
+        deviceTransform: simd_float4x4?
+    ) -> Float {
+        guard let deviceTransform = deviceTransform else { return 0 }
+
+        // Get forward direction (horizontal)
+        let forward = simd_normalize(SIMD3<Float>(
+            -deviceTransform.columns.2.x,
+            0,
+            -deviceTransform.columns.2.z
+        ))
+
+        // Project each hand position onto the forward axis
+        let leftForward = simd_dot(left, forward)
+        let rightForward = simd_dot(right, forward)
+
+        // Difference determines rotation direction and magnitude
+        let forwardDiff = rightForward - leftForward
+
+        // Scale and clamp rotation
+        let rotation = forwardDiff * GestureConstants.fireWallRotationSensitivity
+        return max(-GestureConstants.fireWallMaxRotation,
+                   min(GestureConstants.fireWallMaxRotation, rotation))
+    }
+
     // MARK: - Position Helpers
 
     /// Get the palm position for fireball placement (with offset above palm)

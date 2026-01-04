@@ -42,6 +42,17 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Dynamic point lighting from fireballs
   - **Flamethrower Mode**: Open hand in "stop" gesture (palm facing away, fingers up) to shoot a continuous flame stream from your palm
   - **Combined Flamethrower**: When using flamethrowers with both hands, bring hands together (within 15cm) to merge into a single powerful combined stream with enhanced visuals and audio; separating hands splits back into individual streams
+  - **Fire Wall Mode**: "Zombie pose" gesture (both arms extended forward, palms down, hands open) creates defensive fire walls
+    - Walls spawn as blue embers at your gaze position on the floor
+    - **Height**: Raise/lower arms (chest level = embers only, eye level = full 2.5m wall)
+    - **Width**: Spread hands apart (20cm to 4m)
+    - **Rotation**: Move one hand forward to rotate wall (left forward = counter-clockwise, right forward = clockwise, ±90°)
+    - **Position**: Move both hands together to reposition wall on floor
+    - **Confirm**: Clench both fists simultaneously to lock wall in place (blue → red/orange)
+    - **Select**: Look at a confirmed wall for 0.5s while in zombie pose (red/orange → green)
+    - **Edit**: Clench both fists while wall is green to re-enter edit mode
+    - **Despawn**: Lower wall to minimum height (embers) + clench both fists
+    - Maximum 3 confirmed fire walls at once
 - **Audio System**:
   - Fire crackle sound (looping) while holding fireballs with fade in/out
   - Flamethrower sound (looping) during flame stream with audio boost when combined
@@ -55,13 +66,15 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Combined flamethrower with enhanced particle intensity and larger muzzle flash
   - Smoke puff effects when fireballs extinguish
   - **Procedural scorch marks** with animated ember glow, multi-layer textures, and lingering smoke
+  - **Multi-layer fire walls** with ember base, flame layers (base, body, tips), and rising smoke
+  - Fire wall color states: blue (editing), red/orange (confirmed), green (selected)
   - Dynamic explosion lighting with fade animation
   - Programmatically generated particle emitters for optimal performance
 
 ### Planned Features
 
 - **Element Bending Expansion**
-  - Fire bending: Add fire shields, sustained flame jets
+  - Fire bending: ~~Add fire shields~~, ~~sustained flame jets~~ (Flamethrower and Fire Wall implemented!)
   - Water bending: Manipulate water projectiles and defensive waves
   - Earth bending: Launch rocks and create protective barriers
   - Air bending: Generate wind blasts and aerial evasion
@@ -115,6 +128,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **ExplosionEffects**: Multi-layer explosion with dynamic lighting
 - **ScorchMarkEffects**: Procedural scorch marks with ember glow animation
 - **FlamethrowerEffects**: Multi-layer flamethrower stream with configurable muzzle and jet intensity for single/combined modes
+- **FireWallEffects**: Multi-layer fire wall with ember base, flame layers, smoke, and three color states (blue/red-orange/green)
 
 #### State Management
 
@@ -163,7 +177,8 @@ ElementalWarrior/
 │       ├── FireballEffects.swift       # Fireball and trail particles
 │       ├── ExplosionEffects.swift      # Explosion particle effects
 │       ├── ScorchMarkEffects.swift     # Procedural scorch marks
-│       └── FlamethrowerEffects.swift   # Flamethrower stream effects
+│       ├── FlamethrowerEffects.swift   # Flamethrower stream effects
+│       └── FireWallEffects.swift       # Fire wall with color states
 ├── RealityAssetStuff/                  # Reality Composer Pro project (experimental)
 ├── CLAUDE.md                           # Developer guidance for AI assistants
 └── ElementalWarrior.xcodeproj/         # Xcode project
@@ -196,7 +211,13 @@ ElementalWarrior/
 7. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
 8. **Flamethrower**: Hold your hand in a "stop" gesture (palm facing away from you, fingers up) to shoot a continuous flame stream
 9. **Combined Flamethrower**: Use flamethrowers with both hands and bring them together to create a more powerful combined stream; separate hands to split back into two streams
-10. Click "Quit Immersion" to return to the home view
+10. **Fire Wall**: Extend both arms forward with palms facing down and hands open (zombie pose) to create a fire wall at where you're looking
+    - Raise/lower arms to control wall height, spread hands to control width
+    - Move one hand forward to rotate the wall
+    - Clench both fists simultaneously to confirm (blue → red/orange)
+    - Look at a confirmed wall to select it (turns green), then fists to edit
+    - Maximum 3 confirmed walls
+11. Click "Quit Immersion" to return to the home view
 
 ## Development Roadmap
 
@@ -217,6 +238,8 @@ ElementalWarrior/
 - [x] Persistent mesh collision (works beyond LiDAR range)
 - [x] Code refactoring for maintainability
 - [x] Mega fireball combining (two fireballs → mega fireball with scaled effects)
+- [x] Flamethrower mode with combined dual-hand stream
+- [x] Fire Wall defensive barriers with zombie pose gesture
 
 ### Phase 2: Combat System
 - [ ] AI enemy entities

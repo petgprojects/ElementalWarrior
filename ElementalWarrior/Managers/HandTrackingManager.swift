@@ -68,6 +68,22 @@ final class HandTrackingManager {
     private var leftHandState = HandState()
     private var rightHandState = HandState()
 
+    // Fire Wall State
+    private var confirmedFireWalls: [UUID: FireWallState] = [:]
+    private var editingWallState = FireWallEditingState()
+
+    // Store latest hand anchors for zombie pose detection (requires both hands)
+    private var latestLeftAnchor: HandAnchor?
+    private var latestRightAnchor: HandAnchor?
+
+    // Gaze selection for fire walls
+    private var gazeSelectedWallID: UUID?
+    private var gazeSelectionStartTime: TimeInterval?
+
+    // Simultaneous fist detection for fire wall confirmation
+    private var leftFistTime: TimeInterval?
+    private var rightFistTime: TimeInterval?
+
     // Debug state - observable for UI
     var leftHandGestureState: HandGestureState = .none
     var rightHandGestureState: HandGestureState = .none
@@ -177,6 +193,13 @@ final class HandTrackingManager {
             let anchor = update.anchor
             let isLeft = anchor.chirality == .left
 
+            // Store latest anchors for zombie pose detection
+            if isLeft {
+                latestLeftAnchor = anchor
+            } else {
+                latestRightAnchor = anchor
+            }
+
             guard anchor.isTracked else {
                 if isLeft {
                     await handleTrackingLost(isLeft: true)
@@ -279,6 +302,36 @@ final class HandTrackingManager {
 
             // Check for flamethrower combining after processing hand update
             await checkFlamethrowerCombine()
+
+            // Check for zombie pose (fire wall gesture) - requires both hands
+            let deviceTransformForZombie = worldTracking.queryDeviceAnchor(atTimestamp: CACurrentMediaTime())?.originFromAnchorTransform
+            let zombieResult = GestureDetection.checkZombiePose(
+                leftAnchor: latestLeftAnchor,
+                rightAnchor: latestRightAnchor,
+                deviceTransform: deviceTransformForZombie
+            )
+
+            if zombieResult.isZombiePose, let leftPos = zombieResult.leftPosition, let rightPos = zombieResult.rightPosition {
+                await handleZombiePose(
+                    leftPosition: leftPos,
+                    rightPosition: rightPos,
+                    heightPercent: zombieResult.heightPercent,
+                    deviceTransform: deviceTransformForZombie
+                )
+                await updateGazeSelection(deviceTransform: deviceTransformForZombie)
+
+                // Update debug state
+                if isLeft {
+                    leftHandGestureState = .fireWall
+                } else {
+                    rightHandGestureState = .fireWall
+                }
+            } else if editingWallState.isActive {
+                await cancelFireWallEditing()
+            }
+
+            // Check for simultaneous fist confirmation (fire wall)
+            await checkFireWallFistConfirmation(leftIsFist: isFist && isLeft, rightIsFist: isFist && !isLeft)
         }
     }
 
@@ -1810,5 +1863,562 @@ final class HandTrackingManager {
             return template.clone(recursive: true)
         }
         return Entity()
+    }
+
+    // MARK: - Fire Wall System
+
+    /// Handle zombie pose gesture for fire wall creation/editing
+    private func handleZombiePose(
+        leftPosition: SIMD3<Float>,
+        rightPosition: SIMD3<Float>,
+        heightPercent: Float,
+        deviceTransform: simd_float4x4?
+    ) async {
+        // Cancel any active fireball or flamethrower when in zombie pose
+        if leftHandState.fireball != nil {
+            leftHandState.despawnTask?.cancel()
+            await extinguishLeft()
+        }
+        if rightHandState.fireball != nil {
+            rightHandState.despawnTask?.cancel()
+            await extinguishRight()
+        }
+        if leftHandState.isUsingFlamethrower {
+            await stopFlamethrower(for: .left)
+        }
+        if rightHandState.isUsingFlamethrower {
+            await stopFlamethrower(for: .right)
+        }
+
+        // Calculate wall parameters from hand positions
+        let handSeparation = GestureDetection.calculateHandSeparation(left: leftPosition, right: rightPosition)
+        let rotation = GestureDetection.calculateWallRotation(
+            left: leftPosition,
+            right: rightPosition,
+            deviceTransform: deviceTransform
+        )
+
+        // Map hand separation to wall width (20cm-120cm hand spread → 20cm-4m wall)
+        let normalizedSeparation = (handSeparation - 0.2) / 1.0
+        let width = GestureConstants.fireWallMinWidth +
+            normalizedSeparation * (GestureConstants.fireWallMaxWidth - GestureConstants.fireWallMinWidth)
+        let clampedWidth = max(GestureConstants.fireWallMinWidth,
+                               min(GestureConstants.fireWallMaxWidth, width))
+
+        if !editingWallState.isActive {
+            // Start new wall creation
+            await startFireWallCreation(
+                gazePosition: calculateGazeFloorPosition(deviceTransform: deviceTransform),
+                width: clampedWidth,
+                height: heightPercent,
+                rotation: rotation,
+                deviceTransform: deviceTransform
+            )
+        } else {
+            // Update existing wall being edited
+            await updateFireWall(
+                width: clampedWidth,
+                height: heightPercent,
+                rotation: rotation,
+                leftPosition: leftPosition,
+                rightPosition: rightPosition
+            )
+        }
+    }
+
+    /// Start creating a new fire wall at the gaze position
+    private func startFireWallCreation(
+        gazePosition: SIMD3<Float>,
+        width: Float,
+        height: Float,
+        rotation: Float,
+        deviceTransform: simd_float4x4?
+    ) async {
+        // Check wall limit
+        let confirmedCount = confirmedFireWalls.values.filter { $0.colorState == .redOrange }.count
+        guard confirmedCount < GestureConstants.fireWallMaxCount else {
+            print("Maximum fire walls reached (\(GestureConstants.fireWallMaxCount))")
+            return
+        }
+
+        let wallID = UUID()
+        let now = CACurrentMediaTime()
+
+        // Create wall entity
+        let wallEntity = createFireWall(
+            width: width,
+            height: max(0.01, height),
+            colorState: .blue
+        )
+
+        // Position on floor
+        var floorPosition = gazePosition
+        floorPosition.y = 0
+
+        wallEntity.position = floorPosition
+
+        // Rotate perpendicular to gaze, then apply user rotation
+        if let deviceTransform = deviceTransform {
+            let gazeDir = SIMD3<Float>(
+                -deviceTransform.columns.2.x,
+                0,
+                -deviceTransform.columns.2.z
+            )
+            let baseRotation = atan2(gazeDir.x, gazeDir.z)
+            wallEntity.orientation = simd_quatf(angle: baseRotation + rotation + Float.pi / 2, axis: [0, 1, 0])
+
+            // Store base user rotation for later adjustments
+            editingWallState.baseUserRotation = baseRotation
+        }
+
+        rootEntity.addChild(wallEntity)
+
+        // Start audio (reuse fire crackle)
+        var audioController: AudioPlaybackController?
+        if let crackle = crackleSound {
+            audioController = wallEntity.playAudio(crackle)
+            audioController?.gain = -20
+            audioController?.fade(to: -8, duration: 0.5)
+        }
+
+        // Create state
+        let wallState = FireWallState(
+            id: wallID,
+            entity: wallEntity,
+            position: floorPosition,
+            rotation: rotation,
+            width: width,
+            height: height,
+            colorState: .blue,
+            creationTime: now,
+            lastModifiedTime: now,
+            audioController: audioController
+        )
+
+        // Update editing state
+        editingWallState = FireWallEditingState(
+            isActive: true,
+            currentWall: wallID,
+            isCreatingNew: true,
+            initialWallWidth: width,
+            initialWallRotation: rotation,
+            baseUserRotation: editingWallState.baseUserRotation
+        )
+
+        // Store temporarily (not confirmed yet)
+        confirmedFireWalls[wallID] = wallState
+
+        print("Started fire wall creation: \(wallID)")
+    }
+
+    /// Update the fire wall being edited with new parameters
+    private func updateFireWall(
+        width: Float,
+        height: Float,
+        rotation: Float,
+        leftPosition: SIMD3<Float>,
+        rightPosition: SIMD3<Float>
+    ) async {
+        guard let wallID = editingWallState.currentWall,
+              var wallState = confirmedFireWalls[wallID],
+              let wallEntity = wallState.entity else {
+            return
+        }
+
+        // Update dimensions
+        wallState.width = width
+        wallState.height = height
+        wallState.rotation = rotation
+        wallState.lastModifiedTime = CACurrentMediaTime()
+
+        // Rebuild wall with new dimensions
+        for child in wallEntity.children {
+            child.removeFromParent()
+        }
+
+        let newWall = createFireWall(
+            width: width,
+            height: max(0.01, height),
+            colorState: wallState.colorState
+        )
+        for child in newWall.children {
+            wallEntity.addChild(child.clone(recursive: true))
+        }
+
+        // Update position based on hand midpoint movement
+        let handMidpoint = (leftPosition + rightPosition) / 2
+        if let lastLeft = editingWallState.lastLeftHandPosition,
+           let lastRight = editingWallState.lastRightHandPosition {
+            let lastMidpoint = (lastLeft + lastRight) / 2
+            let delta = SIMD3<Float>(handMidpoint.x - lastMidpoint.x, 0, handMidpoint.z - lastMidpoint.z)
+            wallState.position += delta
+            wallEntity.position = wallState.position
+        }
+
+        // Update rotation
+        let finalRotation = editingWallState.baseUserRotation + rotation + Float.pi / 2
+        wallEntity.orientation = simd_quatf(angle: finalRotation, axis: [0, 1, 0])
+
+        // Update editing state tracking
+        editingWallState.lastLeftHandPosition = leftPosition
+        editingWallState.lastRightHandPosition = rightPosition
+
+        confirmedFireWalls[wallID] = wallState
+    }
+
+    /// Check for simultaneous fist clench to confirm/edit/despawn fire walls
+    private func checkFireWallFistConfirmation(leftIsFist: Bool, rightIsFist: Bool) async {
+        let now = CACurrentMediaTime()
+
+        // Track fist timing for each hand
+        if leftIsFist && leftFistTime == nil {
+            leftFistTime = now
+        } else if !leftIsFist {
+            leftFistTime = nil
+        }
+
+        if rightIsFist && rightFistTime == nil {
+            rightFistTime = now
+        } else if !rightIsFist {
+            rightFistTime = nil
+        }
+
+        // Check for simultaneous fists within window
+        guard let leftTime = leftFistTime,
+              let rightTime = rightFistTime else {
+            return
+        }
+
+        let timeDiff = abs(leftTime - rightTime)
+        if timeDiff < GestureConstants.fireWallFistConfirmWindow {
+            if editingWallState.isActive {
+                if let wallID = editingWallState.currentWall,
+                   let wallState = confirmedFireWalls[wallID] {
+
+                    // Check if at minimum height (despawn)
+                    if wallState.isEmbersOnly && !editingWallState.isCreatingNew {
+                        await despawnFireWall(wallID: wallID)
+                    } else if wallState.isEmbersOnly && editingWallState.isCreatingNew {
+                        // Cancel creation if confirming at ember-only height
+                        await cancelFireWallEditing()
+                    } else {
+                        // Confirm the wall
+                        await confirmFireWall(wallID: wallID)
+                    }
+                }
+            } else if let selectedID = gazeSelectedWallID {
+                // Enter edit mode for selected wall
+                await enterFireWallEditMode(wallID: selectedID)
+            }
+
+            // Reset fist timing to prevent repeated triggers
+            leftFistTime = nil
+            rightFistTime = nil
+        }
+    }
+
+    /// Confirm a fire wall (transition from blue to red/orange)
+    private func confirmFireWall(wallID: UUID) async {
+        guard var wallState = confirmedFireWalls[wallID],
+              let wallEntity = wallState.entity else {
+            return
+        }
+
+        print("Confirming fire wall: \(wallID)")
+
+        // Transition to red/orange
+        wallState.colorState = .redOrange
+        wallState.isEditing = false
+
+        // Rebuild with new color
+        for child in wallEntity.children {
+            child.removeFromParent()
+        }
+        let newWall = createFireWall(
+            width: wallState.width,
+            height: wallState.height,
+            colorState: .redOrange
+        )
+        for child in newWall.children {
+            wallEntity.addChild(child.clone(recursive: true))
+        }
+
+        // Boost audio for confirmed wall
+        wallState.audioController?.fade(to: -3, duration: 0.3)
+
+        confirmedFireWalls[wallID] = wallState
+
+        // Exit editing mode
+        editingWallState = FireWallEditingState()
+
+        print("Fire wall confirmed! Total walls: \(confirmedFireWalls.count)")
+    }
+
+    /// Update gaze selection for existing fire walls
+    private func updateGazeSelection(deviceTransform: simd_float4x4?) async {
+        guard let deviceTransform = deviceTransform else { return }
+
+        let gazeOrigin = GestureDetection.extractPosition(from: deviceTransform)
+        let gazeDir = SIMD3<Float>(
+            -deviceTransform.columns.2.x,
+            -deviceTransform.columns.2.y,
+            -deviceTransform.columns.2.z
+        )
+
+        var closestWall: UUID?
+        var closestDistance: Float = Float.infinity
+
+        // Find wall being looked at
+        for (id, wallState) in confirmedFireWalls {
+            // Only select confirmed (red/orange) walls, not walls currently being edited
+            guard wallState.colorState == .redOrange else { continue }
+
+            // Simple distance check from gaze ray to wall center
+            let toWall = wallState.position - gazeOrigin
+            let projection = simd_dot(toWall, gazeDir)
+
+            if projection > 0 && projection < 10 {  // In front, within 10m
+                let closestPoint = gazeOrigin + gazeDir * projection
+                let distance = simd_distance(closestPoint, wallState.position)
+
+                if distance < GestureConstants.fireWallGazeSelectionRadius && distance < closestDistance {
+                    closestDistance = distance
+                    closestWall = id
+                }
+            }
+        }
+
+        let now = CACurrentMediaTime()
+
+        if let wallID = closestWall {
+            if gazeSelectedWallID == wallID {
+                // Continue dwelling
+                if let startTime = gazeSelectionStartTime,
+                   now - startTime > GestureConstants.fireWallGazeDwellDuration {
+                    // Dwell complete - highlight wall green
+                    await highlightWallForSelection(wallID: wallID)
+                }
+            } else {
+                // New wall being looked at
+                if let previousID = gazeSelectedWallID {
+                    await unhighlightWall(wallID: previousID)
+                }
+                gazeSelectedWallID = wallID
+                gazeSelectionStartTime = now
+            }
+        } else {
+            // No wall being looked at
+            if let previousID = gazeSelectedWallID {
+                await unhighlightWall(wallID: previousID)
+            }
+            gazeSelectedWallID = nil
+            gazeSelectionStartTime = nil
+        }
+    }
+
+    /// Highlight a wall green to indicate it's selected
+    private func highlightWallForSelection(wallID: UUID) async {
+        guard var wallState = confirmedFireWalls[wallID],
+              let wallEntity = wallState.entity,
+              wallState.colorState != .green else {
+            return
+        }
+
+        wallState.colorState = .green
+
+        // Rebuild with green color
+        for child in wallEntity.children {
+            child.removeFromParent()
+        }
+        let newWall = createFireWall(
+            width: wallState.width,
+            height: wallState.height,
+            colorState: .green
+        )
+        for child in newWall.children {
+            wallEntity.addChild(child.clone(recursive: true))
+        }
+
+        confirmedFireWalls[wallID] = wallState
+    }
+
+    /// Unhighlight a wall (revert to red/orange)
+    private func unhighlightWall(wallID: UUID) async {
+        guard var wallState = confirmedFireWalls[wallID],
+              let wallEntity = wallState.entity,
+              wallState.colorState == .green else {
+            return
+        }
+
+        wallState.colorState = .redOrange
+
+        // Rebuild with red/orange color
+        for child in wallEntity.children {
+            child.removeFromParent()
+        }
+        let newWall = createFireWall(
+            width: wallState.width,
+            height: wallState.height,
+            colorState: .redOrange
+        )
+        for child in newWall.children {
+            wallEntity.addChild(child.clone(recursive: true))
+        }
+
+        confirmedFireWalls[wallID] = wallState
+    }
+
+    /// Enter edit mode for an existing fire wall
+    private func enterFireWallEditMode(wallID: UUID) async {
+        guard var wallState = confirmedFireWalls[wallID],
+              let wallEntity = wallState.entity else {
+            return
+        }
+
+        print("Entering edit mode for wall: \(wallID)")
+
+        wallState.colorState = .blue
+        wallState.isEditing = true
+
+        // Rebuild with blue color
+        for child in wallEntity.children {
+            child.removeFromParent()
+        }
+        let newWall = createFireWall(
+            width: wallState.width,
+            height: wallState.height,
+            colorState: .blue
+        )
+        for child in newWall.children {
+            wallEntity.addChild(child.clone(recursive: true))
+        }
+
+        confirmedFireWalls[wallID] = wallState
+
+        editingWallState = FireWallEditingState(
+            isActive: true,
+            currentWall: wallID,
+            isCreatingNew: false,
+            initialWallWidth: wallState.width,
+            initialWallRotation: wallState.rotation
+        )
+
+        gazeSelectedWallID = nil
+        gazeSelectionStartTime = nil
+    }
+
+    /// Despawn a fire wall with smoke animation
+    private func despawnFireWall(wallID: UUID) async {
+        guard let wallState = confirmedFireWalls[wallID],
+              let wallEntity = wallState.entity else {
+            return
+        }
+
+        print("Despawning fire wall: \(wallID)")
+
+        // Fade out audio
+        wallState.audioController?.fade(to: -80, duration: 0.5)
+
+        // Create smoke effect
+        let smoke = createFireWallDespawnSmoke(width: wallState.width, height: wallState.height)
+        smoke.position = wallEntity.position
+        smoke.orientation = wallEntity.orientation
+        rootEntity.addChild(smoke)
+
+        // Animate wall shrinking
+        var transform = wallEntity.transform
+        transform.scale = [0.1, 0.1, 0.1]
+        wallEntity.move(to: transform, relativeTo: wallEntity.parent, duration: 0.4, timingFunction: .easeIn)
+
+        try? await Task.sleep(for: .milliseconds(450))
+
+        // Remove wall
+        wallEntity.removeFromParent()
+        wallState.audioController?.stop()
+        confirmedFireWalls.removeValue(forKey: wallID)
+
+        // Clean up smoke after particles fade
+        Task {
+            try? await Task.sleep(for: .milliseconds(2000))
+            smoke.removeFromParent()
+        }
+
+        editingWallState = FireWallEditingState()
+
+        print("Fire wall despawned. Remaining walls: \(confirmedFireWalls.count)")
+    }
+
+    /// Cancel fire wall editing (removes uncommitted new walls, reverts edits)
+    private func cancelFireWallEditing() async {
+        guard editingWallState.isActive,
+              let wallID = editingWallState.currentWall else {
+            editingWallState = FireWallEditingState()
+            return
+        }
+
+        if editingWallState.isCreatingNew {
+            // Cancel new wall - remove it
+            if let wallState = confirmedFireWalls[wallID],
+               let wallEntity = wallState.entity {
+                wallState.audioController?.fade(to: -80, duration: 0.3)
+                wallEntity.removeFromParent()
+                wallState.audioController?.stop()
+            }
+            confirmedFireWalls.removeValue(forKey: wallID)
+            print("Cancelled fire wall creation")
+        } else {
+            // Editing existing - revert to confirmed state
+            if var wallState = confirmedFireWalls[wallID],
+               let wallEntity = wallState.entity {
+                wallState.colorState = .redOrange
+                wallState.isEditing = false
+
+                // Rebuild with red/orange
+                for child in wallEntity.children {
+                    child.removeFromParent()
+                }
+                let newWall = createFireWall(
+                    width: wallState.width,
+                    height: wallState.height,
+                    colorState: .redOrange
+                )
+                for child in newWall.children {
+                    wallEntity.addChild(child.clone(recursive: true))
+                }
+
+                confirmedFireWalls[wallID] = wallState
+            }
+            print("Cancelled fire wall editing")
+        }
+
+        editingWallState = FireWallEditingState()
+    }
+
+    /// Calculate floor position from gaze direction
+    private func calculateGazeFloorPosition(deviceTransform: simd_float4x4?) -> SIMD3<Float> {
+        guard let deviceTransform = deviceTransform else {
+            return SIMD3<Float>(0, 0, -GestureConstants.fireWallSpawnDistance)
+        }
+
+        let headPos = GestureDetection.extractPosition(from: deviceTransform)
+        let gazeDir = SIMD3<Float>(
+            -deviceTransform.columns.2.x,
+            -deviceTransform.columns.2.y,
+            -deviceTransform.columns.2.z
+        )
+
+        // Raycast to floor (y = 0)
+        if gazeDir.y < -0.01 {  // Looking somewhat downward
+            let t = -headPos.y / gazeDir.y
+            if t > 0 && t < 20 {  // Within reasonable range
+                return headPos + gazeDir * t
+            }
+        }
+
+        // Default: spawn at fixed distance in front on the floor
+        let horizontalGaze = simd_normalize(SIMD3<Float>(gazeDir.x, 0, gazeDir.z))
+        var spawnPos = headPos + horizontalGaze * GestureConstants.fireWallSpawnDistance
+        spawnPos.y = 0
+        return spawnPos
     }
 }

@@ -19,6 +19,16 @@ enum HandGestureState: String {
     case holdingFireball = "HOLDING"
     case collision = "COLLISION"
     case flamethrower = "FLAME"
+    case fireWall = "FIREWALL"
+}
+
+// MARK: - Fire Wall Color State
+
+/// Color state for fire walls indicating their mode
+enum FireWallColorState {
+    case blue       // Spawning/editing mode
+    case redOrange  // Confirmed (locked in place)
+    case green      // Selected for editing (gaze dwell)
 }
 
 // MARK: - Per-Hand State
@@ -53,6 +63,39 @@ struct HandState {
     var isMegaFireball: Bool = false
     var suppressSpawnUntilRelease: Bool = false
     var nextSummonAllowedTime: TimeInterval = 0
+}
+
+// MARK: - Fire Wall State
+
+/// Tracks the state of a fire wall entity
+struct FireWallState {
+    let id: UUID
+    var entity: Entity?
+    var position: SIMD3<Float>       // Center position on floor
+    var rotation: Float              // Rotation angle in radians
+    var width: Float                 // Wall length
+    var height: Float                // Wall height (0-1 normalized, maps to actual meters)
+    var colorState: FireWallColorState
+    var isAnimating: Bool = false
+    var isEditing: Bool = false
+    var creationTime: TimeInterval
+    var lastModifiedTime: TimeInterval
+    var audioController: AudioPlaybackController?
+
+    /// Whether the wall is at minimum height (embers only, will despawn on confirm)
+    var isEmbersOnly: Bool { height < 0.05 }
+}
+
+/// State for the current fire wall editing session
+struct FireWallEditingState {
+    var isActive: Bool = false
+    var currentWall: UUID?           // Wall being created or edited
+    var isCreatingNew: Bool = false  // true if creating, false if editing existing
+    var lastLeftHandPosition: SIMD3<Float>?
+    var lastRightHandPosition: SIMD3<Float>?
+    var initialWallWidth: Float?
+    var initialWallRotation: Float?
+    var baseUserRotation: Float = 0  // User's rotation when wall was created
 }
 
 // MARK: - Projectile State
@@ -118,4 +161,27 @@ enum GestureConstants {
     static let combinedFlamethrowerJetIntensity: Float = 1.5  // jet intensity multiplier when combined
     static let combinedFlamethrowerMuzzleScale: Float = 1.0   // full-size muzzle when combined (vs 0.5 for single)
     static let combinedFlamethrowerAudioBoost: Double = 3.0   // dB boost for combined flamethrower sound
+
+    // Fire Wall constants
+    static let fireWallDefaultWidth: Float = 1.5              // meters default wall length
+    static let fireWallMinWidth: Float = 0.20                 // meters minimum (20cm)
+    static let fireWallMaxWidth: Float = 4.0                  // meters maximum
+    static let fireWallMaxHeight: Float = 2.5                 // meters at 100% height
+    static let fireWallMaxCount: Int = 3                      // maximum confirmed walls
+    static let fireWallSpawnDistance: Float = 2.0             // meters in front of user for gaze spawn
+
+    // Zombie pose thresholds
+    static let zombiePalmDownDotThreshold: Float = 0.5        // palm normal alignment with world down
+    static let zombieArmExtensionMinDistance: Float = 0.35    // meters forward from chest
+    static let zombieHandHeightChestOffset: Float = -0.30     // meters below head for min height (chest)
+    static let zombieHandHeightEyeOffset: Float = 0.0         // meters relative to head for max height (eye)
+
+    // Fire wall rotation control
+    static let fireWallMaxRotation: Float = Float.pi / 2      // +/- 90 degrees max rotation
+    static let fireWallRotationSensitivity: Float = 2.0       // multiplier for hand offset to rotation
+
+    // Fire wall selection and confirmation
+    static let fireWallGazeDwellDuration: TimeInterval = 0.5  // seconds to select via gaze
+    static let fireWallFistConfirmWindow: TimeInterval = 0.2  // 200ms simultaneous fist tolerance
+    static let fireWallGazeSelectionRadius: Float = 0.5       // meters from wall center for gaze selection
 }

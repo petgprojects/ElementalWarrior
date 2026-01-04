@@ -481,18 +481,20 @@ final class HandTrackingManager {
         // Get the distance between hands (using flamethrower positions)
         let distance = simd_distance(leftFlamethrower.position, rightFlamethrower.position)
 
-        if distance < GestureConstants.flamethrowerCombineDistance {
-            // Hands are close enough to combine
-            if combinedFlamethrower == nil && !leftHandState.isPartOfCombinedFlamethrower {
-                await combineFlamethrowers()
-            } else if combinedFlamethrower != nil {
-                // Update combined flamethrower position/orientation
+        let isCombined = combinedFlamethrower != nil
+
+        if isCombined {
+            // Already combined - use larger split distance for hysteresis
+            if distance > GestureConstants.flamethrowerSplitDistance {
+                await separateFlamethrowers()
+            } else {
+                // Still combined, update position/orientation
                 await updateCombinedFlamethrower()
             }
         } else {
-            // Hands are too far apart - separate if combined
-            if combinedFlamethrower != nil {
-                await separateFlamethrowers()
+            // Not combined - check if close enough to combine
+            if distance < GestureConstants.flamethrowerCombineDistance && !leftHandState.isPartOfCombinedFlamethrower {
+                await combineFlamethrowers()
             }
         }
     }
@@ -992,8 +994,11 @@ final class HandTrackingManager {
             let distance = min(simd_distance(origin, hit.position), maxRange)
             lengthFactor = max(0.25, distance / maxRange)
 
+            // Only spawn scorch marks if NOT part of combined flamethrower
+            // (combined flamethrower handles its own scorch marks)
             let now = CACurrentMediaTime()
-            if now - state.lastFlamethrowerScorchTime > GestureConstants.flamethrowerScorchCooldown {
+            if !state.isPartOfCombinedFlamethrower &&
+               now - state.lastFlamethrowerScorchTime > GestureConstants.flamethrowerScorchCooldown {
                 state.lastFlamethrowerScorchTime = now
                 await spawnFlamethrowerScorch(at: hit.position, normal: hit.normal)
             }

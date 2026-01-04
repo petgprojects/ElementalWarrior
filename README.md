@@ -42,7 +42,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Dynamic point lighting from fireballs
   - **Flamethrower Mode**: Open hand in "stop" gesture (palm facing away, fingers up) to shoot a continuous flame stream from your palm
   - **Combined Flamethrower**: When using flamethrowers with both hands, bring hands together (within 15cm) to merge into a single powerful combined stream with enhanced visuals and audio; separating hands splits back into individual streams
-  - **Wall of Fire**: Hold both hands out in a palms-down "zombie" pose to lay an ember line on the ground, spread hands to widen, move hands to reposition, raise hands to grow height, then drop arms to lock it in; look at an existing wall and lower arms in the same pose to drop it (selected walls glow blue)
+  - **Wall of Fire**: Hold both hands out in a palms-down "zombie" pose to lay a blue ember line on the ground, spread hands to widen, move hands to reposition, raise hands to grow height, then clench both fists to confirm (walls stay blue until confirmed); look at an existing wall with zombie arms to edit it, then clench both fists to confirm or despawn by bringing it back to ember height
 - **Audio System**:
   - Fire crackle sound (looping) while holding fireballs with fade in/out
   - Flamethrower sound (looping) during flame stream with audio boost when combined
@@ -200,7 +200,7 @@ ElementalWarrior/
 7. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
 8. **Flamethrower**: Hold your hand in a "stop" gesture (palm facing away from you, fingers up) to shoot a continuous flame stream
 9. **Combined Flamethrower**: Use flamethrowers with both hands and bring them together to create a more powerful combined stream; separate hands to split back into two streams
-10. **Fire Wall**: Hold both hands out with palms down to draw an ember line where you're looking; spread hands to widen, move to reposition, raise to grow the wall, drop arms to lock it in; look at a wall and lower arms in the same pose to drop it
+10. **Fire Wall**: Hold both hands out with palms down to draw a blue ember line where you're looking; spread hands to widen, move to reposition, raise to grow the wall, then clench both fists to confirm; look at a wall with zombie arms to edit it, and clench both fists to confirm or despawn at ember height
 11. Click "Quit Immersion" to return to the home view
 
 ## Development Roadmap

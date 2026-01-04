@@ -345,6 +345,18 @@ func highlightFireWallPalette() -> FireWallPalette {
     )
 }
 
+func selectingFireWallPalette() -> FireWallPalette {
+    FireWallPalette(
+        coreStart: FireWallColor(red: 0.55, green: 1.0, blue: 0.6, alpha: 0.95),
+        coreEnd: FireWallColor(red: 0.15, green: 0.7, blue: 0.25, alpha: 0.0),
+        bodyStart: FireWallColor(red: 0.2, green: 0.9, blue: 0.35, alpha: 0.75),
+        bodyEnd: FireWallColor(red: 0.1, green: 0.55, blue: 0.2, alpha: 0.0),
+        sparksStart: FireWallColor(red: 0.75, green: 1.0, blue: 0.7, alpha: 0.9),
+        sparksEnd: FireWallColor(red: 0.25, green: 0.75, blue: 0.35, alpha: 0.0),
+        lightColor: FireWallColor(red: 0.45, green: 0.95, blue: 0.55, alpha: 1.0)
+    )
+}
+
 func lerpFireWallPalette(from: FireWallPalette, to: FireWallPalette, t: Float) -> FireWallPalette {
     FireWallPalette(
         coreStart: lerpColor(from.coreStart, to.coreStart, t: t),

@@ -38,6 +38,7 @@ final class HandTrackingManager {
         var lineDirection: SIMD3<Float>
         var baseCenter: SIMD3<Float>
         var baseMidpoint: SIMD3<Float>
+        var lastMidpoint: SIMD3<Float>
         var baseHandHeight: Float
         var currentWidth: Float
         var currentCenter: SIMD3<Float>
@@ -49,10 +50,17 @@ final class HandTrackingManager {
         var baseWallHeight: Float
         var baseCenter: SIMD3<Float>
         var baseMidpoint: SIMD3<Float>
+        var lastMidpoint: SIMD3<Float>
         var baseWidth: Float
         var baseSeparation: Float
         var baseLineDirection: SIMD3<Float>
         var baseForwardOffset: Float
+    }
+
+    private enum FireWallPaletteState {
+        case idle
+        case selecting
+        case editing
     }
 
     private struct FireWallState {
@@ -64,9 +72,9 @@ final class HandTrackingManager {
         var planeNormal: SIMD3<Float>
         var wallNormal: SIMD3<Float>
         var basePosition: SIMD3<Float>
-        var isHighlighted: Bool
+        var paletteState: FireWallPaletteState
         var isCollapsing: Bool
-        var highlightTask: Task<Void, Never>?
+        var paletteTask: Task<Void, Never>?
     }
 
     private let session = ARKitSession()
@@ -128,6 +136,8 @@ final class HandTrackingManager {
     private var wallEdit: WallEditState?
     private var bothFistsStartTime: TimeInterval?
     private var fireWalls: [UUID: FireWallState] = [:]
+    private var wallSelectionCandidate: (id: UUID, startTime: TimeInterval)?
+    private var selectedWallID: UUID?
 
     // Debug state - observable for UI
     var leftHandGestureState: HandGestureState = .none
@@ -1550,34 +1560,45 @@ final class HandTrackingManager {
             if let placement = emberPlacement {
                 await fadeOutEmberPlacement(placement)
                 emberPlacement = nil
-                setHighlightedWall(nil)
+                clearWallSelection(resetPalette: wallEdit == nil)
                 return
             }
             if wallEdit != nil {
                 await confirmWallEdit()
                 return
             }
+            if let selectedWallID = selectedWallID {
+                startWallEdit(wallID: selectedWallID, deviceTransform: deviceTransform)
+                return
+            }
         }
 
         if let edit = wallEdit {
-            if poseActive && handsFresh {
+            if poseAllowed && handsFresh {
                 await updateWallEdit(edit: edit, deviceTransform: deviceTransform)
             }
             return
         }
 
         if let placement = emberPlacement {
-            if poseActive && handsFresh {
+            if poseAllowed && handsFresh {
                 await updateEmberPlacement(placement: placement, deviceTransform: deviceTransform)
             }
             return
         }
 
-        guard poseAllowed, poseActive else { return }
+        guard poseAllowed, poseActive else {
+            clearWallSelection(resetPalette: true)
+            return
+        }
 
-        if let selectedWallID = selectWallByGaze(deviceTransform: deviceTransform) {
-            startWallEdit(wallID: selectedWallID, deviceTransform: deviceTransform)
-        } else if let hit = gazeGroundHit(deviceTransform: deviceTransform) {
+        if let wallID = selectWallByGaze(deviceTransform: deviceTransform) {
+            updateWallSelection(now: now, wallID: wallID)
+            return
+        }
+
+        clearWallSelection(resetPalette: true)
+        if let hit = gazeGroundHit(deviceTransform: deviceTransform) {
             startEmberPlacement(hit: hit, deviceTransform: deviceTransform)
         }
     }
@@ -1601,10 +1622,10 @@ final class HandTrackingManager {
                 angle: rotationAngle
             )
         }
-        let handDelta = midpoint - placement.baseMidpoint
+        let handDelta = midpoint - placement.lastMidpoint
         let planeDelta = handDelta - placement.planeNormal * simd_dot(handDelta, placement.planeNormal)
         let scaledPlaneDelta = planeDelta * GestureConstants.wallPlacementMoveScale
-        let targetCenter = placement.baseCenter + scaledPlaneDelta
+        let targetCenter = placement.currentCenter + scaledPlaneDelta
 
         let separation = abs(simd_dot(rightPos - leftPos, placement.lineDirection))
         let scaledSeparation = separation * GestureConstants.wallPlacementWidthScale
@@ -1617,6 +1638,7 @@ final class HandTrackingManager {
         let smoothing = GestureConstants.wallPlacementSmoothing
         placement.currentWidth += (targetWidth - placement.currentWidth) * smoothing
         placement.currentCenter += (targetCenter - placement.currentCenter) * smoothing
+        placement.lastMidpoint = midpoint
 
         let placementPosition = placement.currentCenter + placement.planeNormal * GestureConstants.wallEmberOffset
         placement.visual.root.transform = makeBasisTransform(
@@ -1658,9 +1680,9 @@ final class HandTrackingManager {
             planeNormal: placement.planeNormal,
             wallNormal: wallNormal,
             basePosition: placement.currentCenter,
-            isHighlighted: false,
+            paletteState: .editing,
             isCollapsing: false,
-            highlightTask: nil
+            paletteTask: nil
         )
         wallState.visual.root.transform = makeBasisTransform(
             position: wallState.basePosition,
@@ -1684,12 +1706,14 @@ final class HandTrackingManager {
             baseWallHeight: height,
             baseCenter: placement.currentCenter,
             baseMidpoint: (leftPos + rightPos) * 0.5,
+            lastMidpoint: (leftPos + rightPos) * 0.5,
             baseWidth: placement.currentWidth,
             baseSeparation: separation,
             baseLineDirection: placement.lineDirection,
             baseForwardOffset: baseForwardOffset
         )
-        setHighlightedWall(wallID)
+        clearWallSelection(resetPalette: false)
+        setWallPaletteTarget(id: wallID, state: .editing)
 
         emberPlacement = nil
         await fadeOutEmberPlacement(placement)
@@ -1711,12 +1735,14 @@ final class HandTrackingManager {
             baseWallHeight: wall.height,
             baseCenter: wall.basePosition,
             baseMidpoint: (leftPos + rightPos) * 0.5,
+            lastMidpoint: (leftPos + rightPos) * 0.5,
             baseWidth: wall.width,
             baseSeparation: separation,
             baseLineDirection: wall.lineDirection,
             baseForwardOffset: baseForwardOffset
         )
-        setHighlightedWall(wallID)
+        clearWallSelection(resetPalette: false)
+        setWallPaletteTarget(id: wallID, state: .editing)
     }
 
     private func updateWallEdit(edit: WallEditState, deviceTransform: simd_float4x4?) async {
@@ -1744,10 +1770,10 @@ final class HandTrackingManager {
             angle: rotationAngle
         )
 
-        let handDelta = midpoint - edit.baseMidpoint
+        let handDelta = midpoint - edit.lastMidpoint
         let planeDelta = handDelta - wall.planeNormal * simd_dot(handDelta, wall.planeNormal)
         let scaledPlaneDelta = planeDelta * GestureConstants.wallPlacementMoveScale
-        let targetCenter = edit.baseCenter + scaledPlaneDelta
+        let targetCenter = wall.basePosition + scaledPlaneDelta
 
         let separation = abs(simd_dot(rightPos - leftPos, lineDirection))
         let scaledSeparation = (separation - edit.baseSeparation) * GestureConstants.wallPlacementWidthScale
@@ -1779,13 +1805,17 @@ final class HandTrackingManager {
         updateFireWallEffect(wall.visual, width: wall.width, height: wall.height)
 
         fireWalls[wall.id] = wall
+        var updatedEdit = edit
+        updatedEdit.lastMidpoint = midpoint
+        wallEdit = updatedEdit
     }
 
     private func confirmWallEdit() async {
         guard let edit = wallEdit else { return }
         guard var wall = fireWalls[edit.wallID], !wall.isCollapsing else {
             wallEdit = nil
-            setHighlightedWall(nil)
+            clearWallSelection(resetPalette: false)
+            setWallPaletteTarget(id: nil, state: .idle)
             return
         }
 
@@ -1802,7 +1832,8 @@ final class HandTrackingManager {
         }
 
         wallEdit = nil
-        setHighlightedWall(nil)
+        clearWallSelection(resetPalette: false)
+        setWallPaletteTarget(id: nil, state: .idle)
     }
 
     private func startEmberPlacement(hit: CollisionSystem.HitResult, deviceTransform: simd_float4x4?) {
@@ -1852,6 +1883,7 @@ final class HandTrackingManager {
             lineDirection: lineDirection,
             baseCenter: hit.position,
             baseMidpoint: midpoint,
+            lastMidpoint: midpoint,
             baseHandHeight: avgHeight,
             currentWidth: width,
             currentCenter: hit.position
@@ -1882,7 +1914,7 @@ final class HandTrackingManager {
 
     private func collapseWall(id: UUID) async {
         guard var wall = fireWalls[id], !wall.isCollapsing else { return }
-        wall.highlightTask?.cancel()
+        wall.paletteTask?.cancel()
         wall.isCollapsing = true
         fireWalls[id] = wall
 
@@ -1901,7 +1933,8 @@ final class HandTrackingManager {
         try? await Task.sleep(for: .milliseconds(400))
         wall.visual.root.removeFromParent()
         fireWalls.removeValue(forKey: id)
-        setHighlightedWall(nil)
+        clearWallSelection(resetPalette: true)
+        setWallPaletteTarget(id: nil, state: .idle)
     }
 
     private func stopFireWallEmission(_ visual: FireWallVisual) {
@@ -1923,22 +1956,30 @@ final class HandTrackingManager {
         }
     }
 
-    private func setHighlightedWall(_ id: UUID?) {
-        let highlightPalette = highlightFireWallPalette()
-        let defaultPalette = defaultFireWallPalette()
+    private func paletteForState(_ state: FireWallPaletteState) -> FireWallPalette {
+        switch state {
+        case .idle:
+            return defaultFireWallPalette()
+        case .selecting:
+            return selectingFireWallPalette()
+        case .editing:
+            return highlightFireWallPalette()
+        }
+    }
 
+    private func setWallPaletteTarget(id: UUID?, state: FireWallPaletteState) {
         let wallIDs = Array(fireWalls.keys)
         for wallID in wallIDs {
             guard var wall = fireWalls[wallID] else { continue }
-            let shouldHighlight = wallID == id
-            guard wall.isHighlighted != shouldHighlight else { continue }
+            let newState: FireWallPaletteState = wallID == id ? state : .idle
+            guard wall.paletteState != newState else { continue }
 
-            wall.highlightTask?.cancel()
-            let fromPalette = wall.isHighlighted ? highlightPalette : defaultPalette
-            let toPalette = shouldHighlight ? highlightPalette : defaultPalette
+            wall.paletteTask?.cancel()
+            let fromPalette = paletteForState(wall.paletteState)
+            let toPalette = paletteForState(newState)
 
-            wall.isHighlighted = shouldHighlight
-            wall.highlightTask = Task { @MainActor [weak self] in
+            wall.paletteState = newState
+            wall.paletteTask = Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 let steps = 12
                 for step in 0..<steps {
@@ -1950,6 +1991,37 @@ final class HandTrackingManager {
                 }
             }
             fireWalls[wallID] = wall
+        }
+    }
+
+    private func clearWallSelection(resetPalette: Bool) {
+        guard wallSelectionCandidate != nil || selectedWallID != nil else { return }
+        wallSelectionCandidate = nil
+        selectedWallID = nil
+        if resetPalette {
+            setWallPaletteTarget(id: nil, state: .idle)
+        }
+    }
+
+    private func updateWallSelection(now: TimeInterval, wallID: UUID) {
+        if selectedWallID == wallID {
+            if wallSelectionCandidate?.id != wallID {
+                wallSelectionCandidate = (wallID, now)
+            }
+            return
+        }
+
+        if let candidate = wallSelectionCandidate, candidate.id == wallID {
+            if now - candidate.startTime >= GestureConstants.wallSelectionHoldDuration {
+                selectedWallID = wallID
+                setWallPaletteTarget(id: wallID, state: .selecting)
+            }
+        } else {
+            wallSelectionCandidate = (wallID, now)
+            if selectedWallID != nil {
+                selectedWallID = nil
+                setWallPaletteTarget(id: nil, state: .idle)
+            }
         }
     }
 

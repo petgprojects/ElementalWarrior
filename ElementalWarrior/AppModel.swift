@@ -21,4 +21,6 @@ class AppModel {
     
     // Shared hand tracking manager for debug visibility
     let handTrackingManager = HandTrackingManager()
+
+    let gestureSettings = GestureSettings()
 }

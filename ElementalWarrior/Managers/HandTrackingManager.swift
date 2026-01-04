@@ -31,6 +31,21 @@ final class HandTrackingManager {
         var lastUpdated: TimeInterval = 0
     }
 
+    private struct ZombiePoseDebug {
+        var isZombiePose: Bool
+        var isFistBlocked: Bool
+        var hasDevicePose: Bool
+        var palmDownDot: Float?
+        var forwardDistance: Float?
+        var downDot: Float?
+    }
+
+    private struct PalmForwardDebug {
+        var isFacingForward: Bool
+        var alignment: Float?
+        var verticalAlignment: Float?
+    }
+
     private struct EmberPlacementState {
         var visual: EmberLineVisual
         var planeNormal: SIMD3<Float>
@@ -148,6 +163,8 @@ final class HandTrackingManager {
     var rightHandGestureState: HandGestureState = .none
     var leftDebugInfo: String = ""
     var rightDebugInfo: String = ""
+    var leftHandDebugRows: [GestureDebugRow] = []
+    var rightHandDebugRows: [GestureDebugRow] = []
 
     // MARK: - Initialization
 
@@ -185,6 +202,282 @@ final class HandTrackingManager {
         } catch {
             print("Failed to start ARKit session: \(error)")
         }
+    }
+
+    private func computePalmForwardDebug(
+        palmNormal: SIMD3<Float>?,
+        deviceTransform: simd_float4x4?
+    ) -> PalmForwardDebug {
+        guard let palmNormal = palmNormal, simd_length(palmNormal) > 0.001 else {
+            return PalmForwardDebug(isFacingForward: false, alignment: nil, verticalAlignment: nil)
+        }
+
+        let worldForward: SIMD3<Float>
+        if let deviceTransform = deviceTransform {
+            worldForward = SIMD3<Float>(
+                -deviceTransform.columns.2.x,
+                -deviceTransform.columns.2.y,
+                -deviceTransform.columns.2.z
+            )
+        } else {
+            worldForward = SIMD3<Float>(0, 0, -1)
+        }
+
+        let normalizedPalm = simd_normalize(palmNormal)
+        let alignment = simd_dot(normalizedPalm, simd_normalize(worldForward))
+        let verticalAlignment = abs(simd_dot(normalizedPalm, SIMD3<Float>(0, 1, 0)))
+        let isFacingForward = alignment > GestureConstants.flamethrowerForwardDotThreshold &&
+            verticalAlignment < GestureConstants.flamethrowerUpRejectThreshold
+
+        return PalmForwardDebug(
+            isFacingForward: isFacingForward,
+            alignment: alignment,
+            verticalAlignment: verticalAlignment
+        )
+    }
+
+    private func buildHandDebugRows(
+        hasSkeleton: Bool,
+        hasPalmNormal: Bool,
+        openDebug: GestureDetection.OpenHandDebugResult,
+        palmUpDot: Float?,
+        isPalmUp: Bool,
+        forwardDebug: PalmForwardDebug,
+        shouldShowFireball: Bool,
+        shouldUseFlamethrower: Bool,
+        fistDebug: GestureDetection.FistDebugResult,
+        isCollidingWithFireball: Bool,
+        distToLeftFireball: Float?,
+        distToRightFireball: Float?,
+        zombieDebug: ZombiePoseDebug,
+        isZombiePoseActive: Bool,
+        isShowingFireball: Bool,
+        hasFireball: Bool
+    ) -> [GestureDebugRow] {
+        var rows: [GestureDebugRow] = []
+
+        rows.append(GestureDebugRow(
+            title: "Tracking",
+            status: hasSkeleton ? .active : .inactive,
+            attributes: [
+                attribute(name: "Skeleton", value: hasSkeleton ? "✓" : "✗", status: statusFor(hasSkeleton)),
+                attribute(name: "Palm normal", value: hasPalmNormal ? "✓" : "✗", status: statusFor(hasPalmNormal))
+            ]
+        ))
+
+        let middlePassed = (openDebug.middleExtension ?? 0) > openDebug.threshold
+        let indexPassed = (openDebug.indexExtension ?? 0) > openDebug.threshold
+        let openSignals = (middlePassed ? 1 : 0) + (indexPassed ? 1 : 0)
+        let summonSignals = (isPalmUp ? 1 : 0) + (openDebug.isOpen ? 1 : 0)
+        let summonStatus: GestureDebugStatus = hasSkeleton ? (shouldShowFireball ? .active : .inactive) : .unavailable
+        rows.append(GestureDebugRow(
+            title: "Summon",
+            status: summonStatus,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(summonSignals, total: 2, isActive: shouldShowFireball),
+                    status: statusFor(shouldShowFireball, available: hasSkeleton)
+                ),
+                attribute(
+                    name: "Palm up",
+                    value: comparisonValue(palmUpDot, valueFormat: "%.2f", comparator: ">", threshold: GestureDetection.palmUpDotThreshold),
+                    status: statusFor(isPalmUp, available: palmUpDot != nil)
+                ),
+                attribute(
+                    name: "Open middle",
+                    value: comparisonValue(openDebug.middleExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(middlePassed, available: openDebug.middleExtension != nil)
+                ),
+                attribute(
+                    name: "Open index",
+                    value: comparisonValue(openDebug.indexExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(indexPassed, available: openDebug.indexExtension != nil)
+                )
+            ]
+        ))
+
+        rows.append(GestureDebugRow(
+            title: "Holding",
+            status: isShowingFireball ? .active : .inactive,
+            attributes: [
+                attribute(name: "Showing", value: isShowingFireball ? "✓" : "✗", status: statusFor(isShowingFireball)),
+                attribute(name: "Entity", value: hasFireball ? "✓" : "✗", status: statusFor(hasFireball))
+            ]
+        ))
+
+        let alignPassed = forwardDebug.alignment.map { $0 > GestureConstants.flamethrowerForwardDotThreshold } ?? false
+        let vertPassed = forwardDebug.verticalAlignment.map { $0 < GestureConstants.flamethrowerUpRejectThreshold } ?? false
+        let flameSignals = (openDebug.isOpen ? 1 : 0) + (forwardDebug.isFacingForward ? 1 : 0)
+        let flameStatus: GestureDebugStatus = hasSkeleton ? (shouldUseFlamethrower ? .active : .inactive) : .unavailable
+        rows.append(GestureDebugRow(
+            title: "Flame",
+            status: flameStatus,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(flameSignals, total: 2, isActive: shouldUseFlamethrower),
+                    status: statusFor(shouldUseFlamethrower, available: hasSkeleton)
+                ),
+                attribute(
+                    name: "Open middle",
+                    value: comparisonValue(openDebug.middleExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(middlePassed, available: openDebug.middleExtension != nil)
+                ),
+                attribute(
+                    name: "Open index",
+                    value: comparisonValue(openDebug.indexExtension, valueFormat: "%.3f", comparator: ">", threshold: openDebug.threshold, thresholdFormat: "%.3f"),
+                    status: statusFor(indexPassed, available: openDebug.indexExtension != nil)
+                ),
+                attribute(
+                    name: "Align",
+                    value: comparisonValue(forwardDebug.alignment, comparator: ">", threshold: GestureConstants.flamethrowerForwardDotThreshold),
+                    status: statusFor(alignPassed, available: forwardDebug.alignment != nil)
+                ),
+                attribute(
+                    name: "Vertical",
+                    value: comparisonValue(forwardDebug.verticalAlignment, comparator: "<", threshold: GestureConstants.flamethrowerUpRejectThreshold),
+                    status: statusFor(vertPassed, available: forwardDebug.verticalAlignment != nil)
+                )
+            ]
+        ))
+
+        let fistStatus: GestureDebugStatus = fistDebug.hasSkeleton ? (fistDebug.isFist ? .active : .inactive) : .unavailable
+        let thumbValue = fistDebug.thumbCurled
+            ? "curled"
+            : comparisonValue(fistDebug.thumbDistance, comparator: "<", threshold: GestureDetection.thumbCurlDistanceThreshold)
+        rows.append(GestureDebugRow(
+            title: "Fist",
+            status: fistStatus,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(fistDebug.signals, total: 4, isActive: fistDebug.isFist),
+                    status: statusFor(fistDebug.isFist, available: fistDebug.hasSkeleton)
+                ),
+                attribute(
+                    name: "Align",
+                    value: comparisonValue(fistDebug.alignment, comparator: "<", threshold: GestureDetection.fistAlignmentThreshold),
+                    status: statusFor(fistDebug.alignmentPassed, available: fistDebug.alignment != nil)
+                ),
+                attribute(
+                    name: "Thumb",
+                    value: thumbValue,
+                    status: statusFor(fistDebug.thumbCurled, available: fistDebug.thumbDistance != nil || fistDebug.thumbCurled)
+                ),
+                attribute(
+                    name: "Compact",
+                    value: comparisonValue(fistDebug.compactRatio, comparator: "<", threshold: GestureDetection.fistCompactRatioThreshold),
+                    status: statusFor(fistDebug.compactPassed, available: fistDebug.compactRatio != nil)
+                ),
+                attribute(
+                    name: "Cluster",
+                    value: comparisonValue(fistDebug.clusterSpread, comparator: "<", threshold: GestureDetection.fistClusterSpreadThreshold),
+                    status: statusFor(fistDebug.clusterPassed, available: fistDebug.clusterSpread != nil)
+                )
+            ]
+        ))
+
+        let collisionThreshold = GestureConstants.punchProximityThreshold
+        let leftCollisionPassed = distToLeftFireball.map { $0 < collisionThreshold } ?? false
+        let rightCollisionPassed = distToRightFireball.map { $0 < collisionThreshold } ?? false
+        let collisionSignals = (fistDebug.isFist ? 1 : 0) + ((leftCollisionPassed || rightCollisionPassed) ? 1 : 0)
+        rows.append(GestureDebugRow(
+            title: "Collision",
+            status: isCollidingWithFireball ? .active : .inactive,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(collisionSignals, total: 2, isActive: isCollidingWithFireball),
+                    status: statusFor(isCollidingWithFireball)
+                ),
+                attribute(name: "Fist", value: fistDebug.isFist ? "✓" : "✗", status: statusFor(fistDebug.isFist)),
+                attribute(
+                    name: "Left dist",
+                    value: comparisonValue(distToLeftFireball, comparator: "<", threshold: collisionThreshold),
+                    status: statusFor(leftCollisionPassed, available: distToLeftFireball != nil)
+                ),
+                attribute(
+                    name: "Right dist",
+                    value: comparisonValue(distToRightFireball, comparator: "<", threshold: collisionThreshold),
+                    status: statusFor(rightCollisionPassed, available: distToRightFireball != nil)
+                )
+            ]
+        ))
+
+        let downDotThreshold = Float(cos(Double(GestureConstants.zombiePoseMinDownAngleDegrees) * Double.pi / 180.0))
+        let palmDownPassed = zombieDebug.palmDownDot.map { $0 < GestureConstants.zombiePosePalmDownDotThreshold } ?? false
+        let forwardPassed = zombieDebug.forwardDistance.map { $0 >= GestureConstants.zombiePoseMinForwardDistance } ?? false
+        let downDotPassed = zombieDebug.downDot.map { $0 <= downDotThreshold } ?? false
+        let wallTotal = zombieDebug.hasDevicePose ? 3 : 1
+        let wallSignals = (palmDownPassed ? 1 : 0) +
+            (zombieDebug.hasDevicePose && forwardPassed ? 1 : 0) +
+            (zombieDebug.hasDevicePose && downDotPassed ? 1 : 0)
+        let wallStatus: GestureDebugStatus
+        if zombieDebug.palmDownDot == nil && !zombieDebug.isFistBlocked {
+            wallStatus = .unavailable
+        } else if zombieDebug.isZombiePose {
+            wallStatus = .active
+        } else {
+            wallStatus = .inactive
+        }
+        rows.append(GestureDebugRow(
+            title: "Wall Pose",
+            status: wallStatus,
+            attributes: [
+                attribute(
+                    name: "Signals",
+                    value: signalText(wallSignals, total: wallTotal, isActive: zombieDebug.isZombiePose),
+                    status: statusFor(zombieDebug.isZombiePose, available: wallStatus != .unavailable)
+                ),
+                attribute(
+                    name: "Palm down",
+                    value: comparisonValue(zombieDebug.palmDownDot, comparator: "<", threshold: GestureConstants.zombiePosePalmDownDotThreshold),
+                    status: statusFor(palmDownPassed, available: zombieDebug.palmDownDot != nil)
+                ),
+                attribute(
+                    name: "Forward",
+                    value: comparisonValue(zombieDebug.forwardDistance, comparator: ">", threshold: GestureConstants.zombiePoseMinForwardDistance),
+                    status: statusFor(forwardPassed, available: zombieDebug.forwardDistance != nil)
+                ),
+                attribute(
+                    name: "Down dot",
+                    value: comparisonValue(zombieDebug.downDot, comparator: "<=", threshold: downDotThreshold),
+                    status: statusFor(downDotPassed, available: zombieDebug.downDot != nil)
+                ),
+                attribute(name: "Both hands", value: isZombiePoseActive ? "✓" : "✗", status: statusFor(isZombiePoseActive)),
+                attribute(name: "Blocked", value: zombieDebug.isFistBlocked ? "fist" : "none", status: zombieDebug.isFistBlocked ? .fail : .neutral)
+            ]
+        ))
+
+        return rows
+    }
+
+    private func attribute(name: String, value: String, status: GestureDebugAttributeStatus = .neutral) -> GestureDebugAttribute {
+        GestureDebugAttribute(name: name, value: value, status: status)
+    }
+
+    private func statusFor(_ passed: Bool, available: Bool = true) -> GestureDebugAttributeStatus {
+        guard available else { return .neutral }
+        return passed ? .pass : .fail
+    }
+
+    private func signalText(_ signals: Int, total: Int, isActive: Bool) -> String {
+        let mark = isActive ? " ✓" : ""
+        return "\(signals)/\(total)\(mark)"
+    }
+
+    private func comparisonValue(
+        _ value: Float?,
+        valueFormat: String = "%.2f",
+        comparator: String,
+        threshold: Float,
+        thresholdFormat: String = "%.2f"
+    ) -> String {
+        guard let value = value else { return "--" }
+        let valueText = String(format: valueFormat, value)
+        let thresholdText = String(format: thresholdFormat, threshold)
+        return "\(valueText) \(comparator) \(thresholdText)"
     }
 
     // MARK: - Template Loading
@@ -271,8 +564,13 @@ final class HandTrackingManager {
                 skeleton: skeleton,
                 deviceTransform: deviceTransform
             )
-            let (isFist, fistDebugInfo) = GestureDetection.checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
+            let openDebug = GestureDetection.checkHandIsOpenDetailed(skeleton: skeleton)
+            let fistDebug = GestureDetection.checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
+            let isFist = fistDebug.isFist
             let palmNormal = GestureDetection.getPalmNormal(anchor: anchor, skeleton: skeleton)
+            let palmUpDot = palmNormal.map { simd_dot($0, SIMD3<Float>(0, 1, 0)) }
+            let isPalmUp = palmUpDot.map { $0 > GestureDetection.palmUpDotThreshold } ?? false
+            let forwardDebug = computePalmForwardDebug(palmNormal: palmNormal, deviceTransform: deviceTransform)
 
             let earlyFistPosition = GestureDetection.getFistPosition(anchor: anchor, skeleton: skeleton)
 
@@ -301,7 +599,7 @@ final class HandTrackingManager {
                 } else {
                     leftHandGestureState = .none
                 }
-                leftDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebugInfo)"
+                leftDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebug.summary)"
             } else {
                 if isCollidingWithFireball {
                     rightHandGestureState = .collision
@@ -314,7 +612,7 @@ final class HandTrackingManager {
                 } else {
                     rightHandGestureState = .none
                 }
-                rightDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebugInfo)"
+                rightDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebug.summary)"
             }
 
             let hasLeftFireball = leftHandState.fireball != nil
@@ -328,12 +626,13 @@ final class HandTrackingManager {
 
             let previousPalmNormal = isLeft ? leftPoseSnapshot.palmNormal : rightPoseSnapshot.palmNormal
             let resolvedPalmNormal = palmNormal ?? (simd_length(previousPalmNormal) > 0.001 ? previousPalmNormal : nil)
-            let isZombiePoseHand = checkZombiePoseHand(
+            let zombieDebug = checkZombiePoseHand(
                 palmNormal: resolvedPalmNormal,
                 palmPosition: palmPosition,
                 isFist: isFist,
                 deviceTransform: deviceTransform
             )
+            let isZombiePoseHand = zombieDebug.isZombiePose
 
             updatePoseSnapshot(
                 isLeft: isLeft,
@@ -387,6 +686,46 @@ final class HandTrackingManager {
             if poseActive {
                 leftHandGestureState = .wallControl
                 rightHandGestureState = .wallControl
+            }
+
+            if isLeft {
+                leftHandDebugRows = buildHandDebugRows(
+                    hasSkeleton: hasSkeleton,
+                    hasPalmNormal: palmNormal != nil,
+                    openDebug: openDebug,
+                    palmUpDot: palmUpDot,
+                    isPalmUp: isPalmUp,
+                    forwardDebug: forwardDebug,
+                    shouldShowFireball: shouldShowFireball,
+                    shouldUseFlamethrower: shouldUseFlamethrower,
+                    fistDebug: fistDebug,
+                    isCollidingWithFireball: isCollidingWithFireball,
+                    distToLeftFireball: distToLeftFireball,
+                    distToRightFireball: distToRightFireball,
+                    zombieDebug: zombieDebug,
+                    isZombiePoseActive: isZombiePoseActive,
+                    isShowingFireball: leftHandState.isShowingFireball,
+                    hasFireball: leftHandState.fireball != nil
+                )
+            } else {
+                rightHandDebugRows = buildHandDebugRows(
+                    hasSkeleton: hasSkeleton,
+                    hasPalmNormal: palmNormal != nil,
+                    openDebug: openDebug,
+                    palmUpDot: palmUpDot,
+                    isPalmUp: isPalmUp,
+                    forwardDebug: forwardDebug,
+                    shouldShowFireball: shouldShowFireball,
+                    shouldUseFlamethrower: shouldUseFlamethrower,
+                    fistDebug: fistDebug,
+                    isCollidingWithFireball: isCollidingWithFireball,
+                    distToLeftFireball: distToLeftFireball,
+                    distToRightFireball: distToRightFireball,
+                    zombieDebug: zombieDebug,
+                    isZombiePoseActive: isZombiePoseActive,
+                    isShowingFireball: rightHandState.isShowingFireball,
+                    hasFireball: rightHandState.fireball != nil
+                )
             }
 
             // Check for fireball combining after processing hand update
@@ -1571,31 +1910,46 @@ final class HandTrackingManager {
         palmPosition: SIMD3<Float>,
         isFist: Bool,
         deviceTransform: simd_float4x4?
-    ) -> Bool {
-        guard !isFist else { return false }
-        guard let palmNormal = palmNormal, simd_length(palmNormal) > 0.001 else { return false }
+    ) -> ZombiePoseDebug {
+        var debug = ZombiePoseDebug(
+            isZombiePose: false,
+            isFistBlocked: isFist,
+            hasDevicePose: false,
+            palmDownDot: nil,
+            forwardDistance: nil,
+            downDot: nil
+        )
+
+        guard !isFist else { return debug }
+        guard let palmNormal = palmNormal, simd_length(palmNormal) > 0.001 else { return debug }
 
         let worldUp = SIMD3<Float>(0, 1, 0)
         let palmDownDot = simd_dot(simd_normalize(palmNormal), worldUp)
-        guard palmDownDot < GestureConstants.zombiePosePalmDownDotThreshold else { return false }
+        debug.palmDownDot = palmDownDot
+        guard palmDownDot < GestureConstants.zombiePosePalmDownDotThreshold else { return debug }
 
         guard let pose = getDevicePose(deviceTransform: deviceTransform) else {
-            return true
+            debug.isZombiePose = true
+            return debug
         }
 
+        debug.hasDevicePose = true
         let toPalm = palmPosition - pose.position
         let toPalmLength = simd_length(toPalm)
-        guard toPalmLength > 0.001 else { return false }
+        guard toPalmLength > 0.001 else { return debug }
         let forwardDistance = simd_dot(toPalm, pose.forward)
+        debug.forwardDistance = forwardDistance
         if forwardDistance < GestureConstants.zombiePoseMinForwardDistance {
-            return false
+            return debug
         }
 
         let worldDown = SIMD3<Float>(0, -1, 0)
         let downDot = simd_dot(toPalm / toPalmLength, worldDown)
+        debug.downDot = downDot
         let minAngleRadians = Double(GestureConstants.zombiePoseMinDownAngleDegrees) * Double.pi / 180.0
         let cosThreshold = Float(cos(minAngleRadians))
-        return downDot <= cosThreshold
+        debug.isZombiePose = downDot <= cosThreshold
+        return debug
     }
 
     private func isZombiePoseDetected(now: TimeInterval) -> Bool {

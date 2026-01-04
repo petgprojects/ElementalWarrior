@@ -20,6 +20,13 @@ struct ElementalWarriorApp: App {
         .windowStyle(.plain)
         .defaultSize(width: 1000, height: 1000)
 
+        WindowGroup(id: "debug") {
+            DebugWindowView()
+                .environment(appModel)
+        }
+        .windowStyle(.plain)
+        .defaultSize(width: 900, height: 900)
+
         ImmersiveSpace(id: "arena") {
             ArenaImmersiveView()
                 .environment(appModel)

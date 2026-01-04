@@ -173,6 +173,14 @@ enum GestureDetection {
         return dotProduct > 0.4
     }
 
+    /// Check if palm is facing downward for wall placement control
+    static func checkPalmFacingDown(anchor: HandAnchor, skeleton: HandSkeleton) -> Bool {
+        guard let palmNormal = getPalmNormal(anchor: anchor, skeleton: skeleton) else { return false }
+        let worldUp = SIMD3<Float>(0, 1, 0)
+        let dotProduct = simd_dot(simd_normalize(palmNormal), worldUp)
+        return dotProduct < GestureConstants.zombiePosePalmDownDotThreshold
+    }
+
     /// Check if hand is open by measuring finger extension
     static func checkHandIsOpen(skeleton: HandSkeleton) -> Bool {
         let middleTip = skeleton.joint(.middleFingerTip)
@@ -195,6 +203,11 @@ enum GestureDetection {
 
         let extensionThreshold: Float = 0.05
         return middleExtension > extensionThreshold && indexExtension > extensionThreshold
+    }
+
+    /// Check if palm is facing down for wall control (finger visibility not required)
+    static func checkZombiePoseHand(anchor: HandAnchor, skeleton: HandSkeleton) -> Bool {
+        checkPalmFacingDown(anchor: anchor, skeleton: skeleton)
     }
 
     /// Check if the hand should emit a flamethrower (open palm facing forward, away from user)

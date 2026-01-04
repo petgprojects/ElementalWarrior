@@ -42,6 +42,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Dynamic point lighting from fireballs
   - **Flamethrower Mode**: Open hand in "stop" gesture (palm facing away, fingers up) to shoot a continuous flame stream from your palm
   - **Combined Flamethrower**: When using flamethrowers with both hands, bring hands together (within 15cm) to merge into a single powerful combined stream with enhanced visuals and audio; separating hands splits back into individual streams
+  - **Wall of Fire**: Hold both hands out in a palms-down "zombie" pose to lay a blue ember line on the ground, spread hands to widen, move hands to reposition, raise hands to grow height, then clench both fists to confirm (walls stay red after confirmation); look at an existing wall with zombie arms to turn it green after 0.5s gaze, clench both fists to edit (blue), then clench again to confirm or despawn by bringing it back to ember height; crackle audio and a subtle fade-out on despawn
 - **Audio System**:
   - Fire crackle sound (looping) while holding fireballs with fade in/out
   - Flamethrower sound (looping) during flame stream with audio boost when combined
@@ -53,6 +54,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Five-layer explosion effect (white flash, yellow core, orange flame, red outer, smoke)
   - **Multi-layer flamethrower stream** (core jet, body jet, sparks, heat smoke, muzzle flash)
   - Combined flamethrower with enhanced particle intensity and larger muzzle flash
+  - **Fire wall sheets** with ember line placement and blue selection highlight
   - Smoke puff effects when fireballs extinguish
   - **Procedural scorch marks** with animated ember glow, multi-layer textures, and lingering smoke
   - Dynamic explosion lighting with fade animation
@@ -115,6 +117,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **ExplosionEffects**: Multi-layer explosion with dynamic lighting
 - **ScorchMarkEffects**: Procedural scorch marks with ember glow animation
 - **FlamethrowerEffects**: Multi-layer flamethrower stream with configurable muzzle and jet intensity for single/combined modes
+- **FireWallEffects**: Ember line placement and wall of fire sheet emitters with highlight palettes
 
 #### State Management
 
@@ -163,7 +166,8 @@ ElementalWarrior/
 │       ├── FireballEffects.swift       # Fireball and trail particles
 │       ├── ExplosionEffects.swift      # Explosion particle effects
 │       ├── ScorchMarkEffects.swift     # Procedural scorch marks
-│       └── FlamethrowerEffects.swift   # Flamethrower stream effects
+│       ├── FlamethrowerEffects.swift   # Flamethrower stream effects
+│       └── FireWallEffects.swift       # Wall of fire and ember line effects
 ├── RealityAssetStuff/                  # Reality Composer Pro project (experimental)
 ├── CLAUDE.md                           # Developer guidance for AI assistants
 └── ElementalWarrior.xcodeproj/         # Xcode project
@@ -196,7 +200,8 @@ ElementalWarrior/
 7. Flip your palms down to extinguish fireballs (they persist for 1.5s after closing palm)
 8. **Flamethrower**: Hold your hand in a "stop" gesture (palm facing away from you, fingers up) to shoot a continuous flame stream
 9. **Combined Flamethrower**: Use flamethrowers with both hands and bring them together to create a more powerful combined stream; separate hands to split back into two streams
-10. Click "Quit Immersion" to return to the home view
+10. **Fire Wall**: Hold both hands out with palms down to draw a blue ember line where you're looking; spread hands to widen, move to reposition, raise to grow the wall, then clench both fists to confirm; look at a wall with zombie arms to edit it, and clench both fists to confirm or despawn at ember height
+11. Click "Quit Immersion" to return to the home view
 
 ## Development Roadmap
 

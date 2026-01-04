@@ -18,7 +18,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 ### Current Implementation
 
-- **Home Interface**: A welcoming window with an animated fireball and quick access to the arena
+- **Home Interface**: Frosted glass home window with Start/Quit controls and a Debug shortcut
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming
@@ -101,7 +101,8 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 #### Views
 
-- **HomeView** (`HomeView.swift`): Entry point with animated fireball display and navigation controls
+- **HomeView** (`HomeView.swift`): Entry point with frosted glass home UI, Start/Quit controls, and Debug shortcut
+- **DebugWindowView** (`DebugWindowView.swift`): Sidebar-tabbed debug window for hand state, room scanning, and tuning options
 - **ArenaImmersiveView** (`ArenaImmersiveView.swift`): Immersive passthrough environment with hand tracking
 
 #### Hand Tracking System (Managers/)
@@ -160,6 +161,7 @@ ElementalWarrior/
 │   ├── Managers/
 │   │   ├── HandTrackingManager.swift   # Central hand tracking orchestrator
 │   │   ├── GestureTypes.swift          # Shared types and constants
+│   │   ├── GestureSettings.swift       # Tunable gesture constants for the debug window
 │   │   ├── GestureDetection.swift      # Gesture recognition algorithms
 │   │   └── CollisionSystem.swift       # Raycast collision detection
 │   └── Effects/
@@ -191,7 +193,7 @@ ElementalWarrior/
 
 ### First Launch
 
-1. The app opens with the Home window showing an animated fireball
+1. The app opens with the Home window and frosted glass UI
 2. Click "Start" to enter the immersive arena
 3. Open your palms facing upward to spawn fireballs (works for both hands)
 4. **To throw**: Look at your target, then make a fist and punch the fireball

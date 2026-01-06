@@ -245,7 +245,7 @@ final class TutorialPlaybackManager {
     private var handTargets = HandTargets(left: HandAnchor(), right: HandAnchor())
     private var skeletalStates: [SkeletalAnimationState] = []
 
-    private let fireballOffset = SIMD3<Float>(0, 0.02, 0.05)
+    private let fireballOffset = SIMD3<Float>(0, 0.04, 0.10)
     private let flamethrowerOffset = SIMD3<Float>(0, 0, 0.07)
     private let fireballScale: Float = 0.35
     private let combinedFireballScale: Float = 0.52
@@ -314,6 +314,35 @@ final class TutorialPlaybackManager {
             effectAttachments.removeAll()
             skeletalStates = buildSkeletalStates(in: entity, animations: animations)
             handTargets = resolveHandTargets(in: entity)
+
+            // Build gesture joint indices for each hand
+            gestureDetectionAvailable = false
+            if let rightSkeletal = handTargets.right.skeletal {
+                // Print ALL joint names for debugging
+                print("[TutorialPlayback] Available joint names in animation:")
+                for (i, name) in rightSkeletal.state.jointNames.enumerated() {
+                    print("[TutorialPlayback]   [\(i)] \(name)")
+                }
+
+                rightHandGestureJoints = buildGestureJointIndices(from: rightSkeletal.state.jointNames, for: .right)
+                print("[TutorialPlayback] Right hand gesture joints: wrist=\(rightHandGestureJoints.wrist ?? -1), middleKnuckle=\(rightHandGestureJoints.middleKnuckle ?? -1), middleTip=\(rightHandGestureJoints.middleTip ?? -1)")
+
+                // Check if we have minimum required joints for gesture detection
+                if rightHandGestureJoints.wrist != nil {
+                    gestureDetectionAvailable = true
+                    print("[TutorialPlayback] ✓ Gesture detection ENABLED")
+                } else {
+                    print("[TutorialPlayback] ✗ Gesture detection DISABLED - missing wrist joint, using timeline fallback")
+                }
+            }
+            if let leftSkeletal = handTargets.left.skeletal {
+                leftHandGestureJoints = buildGestureJointIndices(from: leftSkeletal.state.jointNames, for: .left)
+                print("[TutorialPlayback] Left hand gesture joints: wrist=\(leftHandGestureJoints.wrist ?? -1), middleKnuckle=\(leftHandGestureJoints.middleKnuckle ?? -1), middleTip=\(leftHandGestureJoints.middleTip ?? -1)")
+            }
+
+            // Reset punch state tracking
+            punchState = PunchTutorialState()
+
             activeEffect = configureEffects(for: tutorial, handTargets: handTargets)
 
             // Calculate appropriate scale to fit animation in window
@@ -563,15 +592,21 @@ final class TutorialPlaybackManager {
 
         switch tutorial.kind {
         case .fireballSummonRight:
-            let visible = progress > 0.2 && progress < 0.75
+            let visible: Bool
+            if gestureDetectionAvailable {
+                let gesture = detectGestureState(for: .right, animationTime: animationTime)
+                visible = gesture.isPalmUp && gesture.isHandOpen
+            } else {
+                // Fallback to timeline-based logic
+                visible = progress > 0.2 && progress < 0.75
+            }
             setVisibility(activeEffect.rightFireball, isVisible: visible)
         case .fireballMaintainRight,
              .fireballFollowRight,
              .fireballCrossPunchBoth:
             setVisibility(activeEffect.rightFireball, isVisible: true)
         case .fireballPunchRight:
-            let visible = progress < 0.82
-            setVisibility(activeEffect.rightFireball, isVisible: visible)
+            updateFireballPunchTutorial(progress: progress, animationTime: animationTime)
         case .fireballCombineBoth:
             let useCombined = progress > 0.55
             setVisibility(activeEffect.leftFireball, isVisible: !useCombined)
@@ -620,6 +655,87 @@ final class TutorialPlaybackManager {
             }
             resetWallTransform()
         }
+    }
+
+    /// Handles the fireball punch tutorial with gesture-based logic
+    private func updateFireballPunchTutorial(progress: Float, animationTime: TimeInterval) {
+        guard let fireball = activeEffect.rightFireball else { return }
+
+        // If gesture detection is not available, use timeline-based fallback
+        if !gestureDetectionAvailable {
+            let visible = progress < 0.82
+            setVisibility(fireball, isVisible: visible)
+            return
+        }
+
+        let gesture = detectGestureState(for: .right, animationTime: animationTime)
+
+        // Debug logging (sparse)
+        let shouldLog = Int(animationTime * 10) % 10 == 0
+        if shouldLog {
+            print("[PunchTutorial] progress=\(String(format: "%.2f", progress)) palmUp=\(gesture.isPalmUp) palmDown=\(gesture.isPalmDown) fist=\(gesture.isFist) open=\(gesture.isHandOpen)")
+            print("[PunchTutorial] state: summoned=\(punchState.hasBeenSummoned) held=\(punchState.isHeldInPlace) launched=\(punchState.hasLaunched)")
+        }
+
+        // Reset state at the start of each loop
+        if progress < 0.05 {
+            punchState = PunchTutorialState()
+        }
+
+        // State machine for punch tutorial:
+        // 1. Palm up + open hand = summon fireball (track hand)
+        // 2. Palm down/neutral = hold fireball in place (stop tracking)
+        // 3. Fist = keep fireball in place (don't despawn)
+        // 4. End of animation = fireball launches (disappears)
+
+        if !punchState.hasLaunched {
+            if gesture.isPalmUp && gesture.isHandOpen {
+                // Summoning state - show fireball and track hand
+                punchState.hasBeenSummoned = true
+                punchState.isHeldInPlace = false
+                punchState.fixedFireballPosition = nil
+                setVisibility(fireball, isVisible: true)
+            } else if punchState.hasBeenSummoned {
+                if gesture.isFist {
+                    // Fist state - keep fireball visible but don't track
+                    if !punchState.isHeldInPlace {
+                        // Transition to held state - capture current position
+                        punchState.fixedFireballPosition = fireball.position
+                        punchState.isHeldInPlace = true
+                    }
+                    setVisibility(fireball, isVisible: true)
+
+                    // Check if we're near the end of the animation (punch happened)
+                    if progress > 0.75 {
+                        punchState.hasLaunched = true
+                        setVisibility(fireball, isVisible: false)
+                    }
+                } else if !gesture.isPalmUp {
+                    // Palm not up and not fist - hold fireball in place
+                    if !punchState.isHeldInPlace {
+                        punchState.fixedFireballPosition = fireball.position
+                        punchState.isHeldInPlace = true
+                    }
+                    setVisibility(fireball, isVisible: true)
+                } else {
+                    // Still palm up but not open - keep tracking
+                    setVisibility(fireball, isVisible: true)
+                }
+            } else {
+                // Not yet summoned - hide fireball
+                setVisibility(fireball, isVisible: false)
+            }
+        } else {
+            // Already launched - keep hidden
+            setVisibility(fireball, isVisible: false)
+        }
+
+        // If fireball is held in place, override its position
+        if punchState.isHeldInPlace, let fixedPos = punchState.fixedFireballPosition {
+            fireball.position = fixedPos
+        }
+
+        punchState.lastGestureState = gesture
     }
 
     private func updateWall(width: Float, height: Float) {
@@ -786,6 +902,231 @@ final class TutorialPlaybackManager {
                 return "_r"
             }
         }
+    }
+
+    // MARK: - Gesture Detection from Animation
+
+    /// Detected gesture state from skeletal animation
+    private struct AnimatedGestureState {
+        var isPalmUp: Bool = false
+        var isPalmDown: Bool = false
+        var isFist: Bool = false
+        var isHandOpen: Bool = false
+    }
+
+    /// Joint indices needed for gesture detection
+    private struct GestureJointIndices {
+        var wrist: Int?
+        var middleKnuckle: Int?
+        var middleIntermediateBase: Int?
+        var middleTip: Int?
+        var indexKnuckle: Int?
+        var indexTip: Int?
+        var ringTip: Int?
+        var littleTip: Int?
+        var thumbTip: Int?
+    }
+
+    private var rightHandGestureJoints = GestureJointIndices()
+    private var leftHandGestureJoints = GestureJointIndices()
+
+    /// State tracking for punch tutorial
+    private struct PunchTutorialState {
+        var hasBeenSummoned: Bool = false
+        var isHeldInPlace: Bool = false
+        var hasLaunched: Bool = false
+        var fixedFireballPosition: SIMD3<Float>?
+        var lastGestureState: AnimatedGestureState?
+    }
+
+    private var punchState = PunchTutorialState()
+    private var gestureDetectionAvailable = false
+
+    /// Build gesture joint indices from skeletal state joint names
+    private func buildGestureJointIndices(from jointNames: [String], for side: HandSide) -> GestureJointIndices {
+        var indices = GestureJointIndices()
+        let suffix = side.suffixToken
+        let altSuffix = side == .left ? "left" : "right"
+
+        // Helper to check if name matches side
+        func matchesSide(_ lower: String) -> Bool {
+            lower.contains(suffix) || lower.contains(altSuffix)
+        }
+
+        for (index, name) in jointNames.enumerated() {
+            let lower = name.lowercased()
+
+            // Match wrist joint - try multiple patterns
+            if indices.wrist == nil {
+                if lower.contains("wrist") && matchesSide(lower) {
+                    indices.wrist = index
+                } else if lower.contains("hand") && matchesSide(lower) && !lower.contains("finger") {
+                    // "hand_r" or "hand_l" can be used as wrist
+                    indices.wrist = index
+                }
+            }
+
+            // Match middle finger joints
+            if lower.contains("middle") && matchesSide(lower) {
+                if lower.contains("metacarpal") {
+                    // Skip metacarpal, we want knuckle
+                } else if lower.contains("knuckle") || lower.contains("proximal") || lower.contains("1") {
+                    if indices.middleKnuckle == nil {
+                        indices.middleKnuckle = index
+                    }
+                } else if lower.contains("intermediate") || lower.contains("medial") || lower.contains("2") {
+                    if indices.middleIntermediateBase == nil {
+                        indices.middleIntermediateBase = index
+                    }
+                } else if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
+                    if indices.middleTip == nil {
+                        indices.middleTip = index
+                    }
+                }
+            }
+
+            // Match index finger joints
+            if lower.contains("index") && matchesSide(lower) {
+                if lower.contains("knuckle") || lower.contains("proximal") || lower.contains("1") {
+                    if indices.indexKnuckle == nil {
+                        indices.indexKnuckle = index
+                    }
+                } else if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
+                    if indices.indexTip == nil {
+                        indices.indexTip = index
+                    }
+                }
+            }
+
+            // Match ring tip
+            if lower.contains("ring") && matchesSide(lower) {
+                if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
+                    if indices.ringTip == nil {
+                        indices.ringTip = index
+                    }
+                }
+            }
+
+            // Match little/pinky tip
+            if (lower.contains("little") || lower.contains("pinky")) && matchesSide(lower) {
+                if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
+                    if indices.littleTip == nil {
+                        indices.littleTip = index
+                    }
+                }
+            }
+
+            // Match thumb tip
+            if lower.contains("thumb") && matchesSide(lower) {
+                if lower.contains("tip") || lower.contains("distal") || lower.contains("3") {
+                    if indices.thumbTip == nil {
+                        indices.thumbTip = index
+                    }
+                }
+            }
+        }
+
+        return indices
+    }
+
+    /// Detect gesture state from current animation frame
+    private func detectGestureState(for side: HandSide, animationTime: TimeInterval) -> AnimatedGestureState {
+        var state = AnimatedGestureState()
+
+        let gestureJoints = side == .left ? leftHandGestureJoints : rightHandGestureJoints
+        let anchor = side == .left ? handTargets.left : handTargets.right
+
+        guard let skeletal = anchor.skeletal,
+              let jointTransforms = jointTransforms(for: skeletal.state, animationTime: animationTime) else {
+            return state
+        }
+
+        let modelMatrix = skeletal.state.modelEntity.transformMatrix(relativeTo: tutorialContainer)
+
+        // Helper to get world position of a joint
+        func worldPosition(jointIndex: Int) -> SIMD3<Float>? {
+            guard jointIndex < jointTransforms.count else { return nil }
+            var cache = Array<simd_float4x4?>(repeating: nil, count: jointTransforms.count)
+            let jointMatrix = jointGlobalMatrix(
+                for: jointIndex,
+                transforms: jointTransforms,
+                parentIndices: skeletal.state.parentIndices,
+                cache: &cache
+            )
+            let worldMatrix = simd_mul(modelMatrix, jointMatrix)
+            return SIMD3<Float>(worldMatrix.columns.3.x, worldMatrix.columns.3.y, worldMatrix.columns.3.z)
+        }
+
+        // Helper to get world transform of a joint
+        func worldTransform(jointIndex: Int) -> simd_float4x4? {
+            guard jointIndex < jointTransforms.count else { return nil }
+            var cache = Array<simd_float4x4?>(repeating: nil, count: jointTransforms.count)
+            let jointMatrix = jointGlobalMatrix(
+                for: jointIndex,
+                transforms: jointTransforms,
+                parentIndices: skeletal.state.parentIndices,
+                cache: &cache
+            )
+            return simd_mul(modelMatrix, jointMatrix)
+        }
+
+        // Detect palm orientation using wrist transform
+        if let wristIndex = gestureJoints.wrist,
+           let wristTransform = worldTransform(jointIndex: wristIndex) {
+            // Palm normal is the Y axis of the wrist (adjusted for left/right hand)
+            let yAxisMultiplier: Float = side == .left ? 1.0 : -1.0
+            let palmNormal = SIMD3<Float>(
+                yAxisMultiplier * wristTransform.columns.1.x,
+                yAxisMultiplier * wristTransform.columns.1.y,
+                yAxisMultiplier * wristTransform.columns.1.z
+            )
+            let normalizedPalmNormal = simd_normalize(palmNormal)
+            let worldUp = SIMD3<Float>(0, 1, 0)
+            let dotProduct = simd_dot(normalizedPalmNormal, worldUp)
+
+            state.isPalmUp = dotProduct > 0.4
+            state.isPalmDown = dotProduct < -0.2
+        }
+
+        // Detect fist/open hand using finger positions
+        if let middleKnuckleIndex = gestureJoints.middleKnuckle,
+           let middleTipIndex = gestureJoints.middleTip,
+           let wristIndex = gestureJoints.wrist,
+           let middleKnucklePos = worldPosition(jointIndex: middleKnuckleIndex),
+           let middleTipPos = worldPosition(jointIndex: middleTipIndex),
+           let wristPos = worldPosition(jointIndex: wristIndex) {
+
+            // Check hand compactness (fist detection)
+            let tipToWrist = simd_distance(middleTipPos, wristPos)
+            let knuckleToWrist = simd_distance(middleKnucklePos, wristPos)
+
+            if knuckleToWrist > 0.001 {
+                let compactRatio = tipToWrist / knuckleToWrist
+                state.isFist = compactRatio < 1.4
+                state.isHandOpen = compactRatio > 1.5
+            }
+        }
+
+        // Additional fist check: fingertip clustering
+        if let indexTipPos = gestureJoints.indexTip.flatMap({ worldPosition(jointIndex: $0) }),
+           let middleTipPos = gestureJoints.middleTip.flatMap({ worldPosition(jointIndex: $0) }),
+           let ringTipPos = gestureJoints.ringTip.flatMap({ worldPosition(jointIndex: $0) }),
+           let littleTipPos = gestureJoints.littleTip.flatMap({ worldPosition(jointIndex: $0) }) {
+
+            let d1 = simd_distance(indexTipPos, littleTipPos)
+            let d2 = simd_distance(indexTipPos, ringTipPos)
+            let d3 = simd_distance(middleTipPos, littleTipPos)
+            let maxSpread = max(d1, max(d2, d3))
+
+            if maxSpread < 0.08 {
+                state.isFist = true
+            }
+            if maxSpread > 0.12 {
+                state.isHandOpen = true
+            }
+        }
+
+        return state
     }
 
     private final class SkeletalAnimationState {

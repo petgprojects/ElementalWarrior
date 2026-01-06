@@ -10,11 +10,13 @@ struct TutorialPreviewWindowView: View {
     @Environment(AppModel.self) private var appModel
 
     var body: some View {
-        ZStack {
-            RealityView { content in
-                content.add(appModel.tutorialPlaybackManager.rootEntity)
-            }
+        let size = appModel.tutorialPlaybackManager.previewSize
 
+        RealityView { content in
+            content.add(appModel.tutorialPlaybackManager.rootEntity)
+        }
+        .frame(width: CGFloat(size.x), height: CGFloat(size.y))
+        .overlay {
             if !appModel.tutorialPlaybackManager.isPlaying {
                 Text("Press Play in the Tutorials debug panel.")
                     .font(.caption)
@@ -24,6 +26,5 @@ struct TutorialPreviewWindowView: View {
                     .cornerRadius(8)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

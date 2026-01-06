@@ -7,6 +7,7 @@
 
 import SwiftUI
 import RealityKit
+//import RealityFoundation
 import QuartzCore
 
 enum TutorialCategory: String, CaseIterable, Hashable {
@@ -196,10 +197,27 @@ final class TutorialPlaybackManager {
     var currentTutorial: HandTutorial?
     var isPlaying: Bool = false
     var lastError: String?
+    var previewSize: SIMD3<Float> = [0.4, 0.4, 0.4]
+
+    private struct HandAnchor {
+        var target: Entity?
+        var skeletal: SkeletalAnchor?
+    }
+
+    private struct SkeletalAnchor {
+        let state: SkeletalAnimationState
+        let jointIndex: Int
+    }
 
     private struct HandTargets {
-        var left: Entity?
-        var right: Entity?
+        var left: HandAnchor
+        var right: HandAnchor
+    }
+
+    private struct EffectAttachment {
+        var effect: Entity
+        var anchor: HandAnchor
+        var offset: SIMD3<Float>
     }
 
     private struct ActiveEffect {
@@ -217,10 +235,15 @@ final class TutorialPlaybackManager {
     private let stageEntity = Entity()
     private let tutorialContainer = Entity()
 
-    private var animationController: AnimationPlaybackController?
+    private var animationControllers: [AnimationPlaybackController] = []
     private var effectTask: Task<Void, Never>?
     private var tutorialEntity: Entity?
     private var activeEffect = ActiveEffect()
+    private var effectAttachments: [EffectAttachment] = []
+    private var previewBoundsMin: SIMD3<Float>?
+    private var previewBoundsMax: SIMD3<Float>?
+    private var handTargets = HandTargets(left: HandAnchor(), right: HandAnchor())
+    private var skeletalStates: [SkeletalAnimationState] = []
 
     private let fireballOffset = SIMD3<Float>(0, 0.02, 0.05)
     private let flamethrowerOffset = SIMD3<Float>(0, 0, 0.07)
@@ -233,6 +256,9 @@ final class TutorialPlaybackManager {
     private let wallBaseOffset = SIMD3<Float>(0, -0.08, -0.2)
     private let stageScale: Float = 0.15
     private let stageOffset = SIMD3<Float>(0, 0, 0)
+    private let previewPadding: Float = 0.08
+    private let previewMinSize: SIMD3<Float> = [0.25, 0.25, 0.25]
+    private let previewMaxSize: SIMD3<Float> = [1.8, 1.8, 1.8]
 
     init() {
         rootEntity.name = "TutorialRoot"
@@ -268,16 +294,23 @@ final class TutorialPlaybackManager {
             tutorialContainer.addChild(entity)
             tutorialEntity = entity
 
-            let animation = entity.availableAnimations.first
-            if let animation {
-                let looping = animation.repeat()
-                animationController = entity.playAnimation(looping, transitionDuration: 0.15, startsPaused: false)
-            } else {
+            let animations = collectAnimations(from: entity)
+            if animations.isEmpty {
                 lastError = "No animation found in \(tutorial.id)"
+            } else {
+                animationControllers = animations.map { animation in
+                    let looping = animation.repeat()
+                    return entity.playAnimation(looping, transitionDuration: 0.15, startsPaused: false)
+                }
             }
 
             let duration = tutorial.kind.loopDuration
-            let handTargets = resolveHandTargets(in: entity)
+            previewBoundsMin = nil
+            previewBoundsMax = nil
+            previewSize = [0.4, 0.4, 0.4]
+            effectAttachments.removeAll()
+            skeletalStates = buildSkeletalStates(in: entity, animations: animations)
+            handTargets = resolveHandTargets(in: entity)
             activeEffect = configureEffects(for: tutorial, handTargets: handTargets)
             startEffectLoop(for: tutorial, duration: max(duration, 0.5))
 
@@ -292,12 +325,18 @@ final class TutorialPlaybackManager {
         effectTask?.cancel()
         effectTask = nil
 
-        animationController?.stop()
-        animationController = nil
+        for controller in animationControllers {
+            controller.stop()
+        }
+        animationControllers.removeAll()
 
         tutorialContainer.children.forEach { $0.removeFromParent() }
         tutorialEntity = nil
         activeEffect = ActiveEffect()
+        effectAttachments.removeAll()
+        previewBoundsMin = nil
+        previewBoundsMax = nil
+        skeletalStates.removeAll()
         isPlaying = false
 
         if resetTutorial {
@@ -321,28 +360,30 @@ final class TutorialPlaybackManager {
     }
 
     private func resolveHandTargets(in entity: Entity) -> HandTargets {
-        let allEntities = collectEntities(from: entity)
-        var leftCandidates: [Entity] = []
-        var rightCandidates: [Entity] = []
-        var handCandidates: [Entity] = []
+        var leftAnchor = HandAnchor()
+        var rightAnchor = HandAnchor()
 
-        for node in allEntities {
-            let name = node.name.lowercased()
-            if name.contains("hand") {
-                handCandidates.append(node)
-            }
-            if name.contains("left") || name.contains("_l") || name.contains("l_") {
-                leftCandidates.append(node)
-            }
-            if name.contains("right") || name.contains("_r") || name.contains("r_") {
-                rightCandidates.append(node)
-            }
+        if let skeletalLeft = resolveSkeletalAnchor(for: .left) {
+            leftAnchor.skeletal = skeletalLeft
+        }
+        if let skeletalRight = resolveSkeletalAnchor(for: .right) {
+            rightAnchor.skeletal = skeletalRight
         }
 
-        let left = leftCandidates.first ?? handCandidates.first ?? entity
-        let right = rightCandidates.first ?? handCandidates.first ?? entity
+        let allEntities = collectEntities(from: entity)
+        let modelEntities = allEntities.filter { $0 is ModelEntity }
 
-        return HandTargets(left: left, right: right)
+        if leftAnchor.skeletal == nil {
+            let leftEntity = pickSideEntity(from: modelEntities, sideTokens: ["left", "_l", "l_"])
+            leftAnchor.target = leftEntity ?? bestFallbackEntity(from: allEntities)
+        }
+
+        if rightAnchor.skeletal == nil {
+            let rightEntity = pickSideEntity(from: modelEntities, sideTokens: ["right", "_r", "r_"])
+            rightAnchor.target = rightEntity ?? bestFallbackEntity(from: allEntities)
+        }
+
+        return HandTargets(left: leftAnchor, right: rightAnchor)
     }
 
     private func collectEntities(from root: Entity) -> [Entity] {
@@ -371,25 +412,33 @@ final class TutorialPlaybackManager {
              .fireballPunchRight,
              .fireballCrossPunchBoth:
             let fireball = createRealisticFireball(scale: fireballScale)
-            effect.rightFireball = attachEffect(fireball, preferredParent: handTargets.right, offset: fireballOffset)
+            effect.rightFireball = attachEffect(fireball, offset: fireballOffset)
+            registerAttachment(effect.rightFireball, anchor: handTargets.right, offset: fireballOffset)
         case .fireballCombineBoth:
             let leftFireball = createRealisticFireball(scale: fireballScale)
             let rightFireball = createRealisticFireball(scale: fireballScale)
             let combined = createRealisticFireball(scale: combinedFireballScale)
-            effect.leftFireball = attachEffect(leftFireball, preferredParent: handTargets.left, offset: fireballOffset)
-            effect.rightFireball = attachEffect(rightFireball, preferredParent: handTargets.right, offset: fireballOffset)
-            effect.combinedFireball = attachEffect(combined, preferredParent: handTargets.right, offset: fireballOffset)
+            effect.leftFireball = attachEffect(leftFireball, offset: fireballOffset)
+            effect.rightFireball = attachEffect(rightFireball, offset: fireballOffset)
+            effect.combinedFireball = attachEffect(combined, offset: fireballOffset)
+            registerAttachment(effect.leftFireball, anchor: handTargets.left, offset: fireballOffset)
+            registerAttachment(effect.rightFireball, anchor: handTargets.right, offset: fireballOffset)
+            registerAttachment(effect.combinedFireball, anchor: handTargets.right, offset: fireballOffset)
             effect.combinedFireball?.isEnabled = false
         case .flamethrowerSummonRight:
             let stream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
-            effect.rightFlamethrower = attachEffect(stream, preferredParent: handTargets.right, offset: flamethrowerOffset)
+            effect.rightFlamethrower = attachEffect(stream, offset: flamethrowerOffset)
+            registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
         case .flamethrowerCombineBoth:
             let leftStream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
             let rightStream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
             let combinedStream = createCombinedFlamethrowerStream(scale: combinedFlamethrowerScale)
-            effect.leftFlamethrower = attachEffect(leftStream, preferredParent: handTargets.left, offset: flamethrowerOffset)
-            effect.rightFlamethrower = attachEffect(rightStream, preferredParent: handTargets.right, offset: flamethrowerOffset)
-            effect.combinedFlamethrower = attachEffect(combinedStream, preferredParent: handTargets.right, offset: flamethrowerOffset)
+            effect.leftFlamethrower = attachEffect(leftStream, offset: flamethrowerOffset)
+            effect.rightFlamethrower = attachEffect(rightStream, offset: flamethrowerOffset)
+            effect.combinedFlamethrower = attachEffect(combinedStream, offset: flamethrowerOffset)
+            registerAttachment(effect.leftFlamethrower, anchor: handTargets.left, offset: flamethrowerOffset)
+            registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
+            registerAttachment(effect.combinedFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
             effect.combinedFlamethrower?.isEnabled = false
         case .wallSummonBoth,
              .wallHeightBoth,
@@ -409,11 +458,16 @@ final class TutorialPlaybackManager {
         return effect
     }
 
-    private func attachEffect(_ effect: Entity, preferredParent: Entity?, offset: SIMD3<Float>) -> Entity {
-        let parent = preferredParent ?? tutorialContainer
+    private func attachEffect(_ effect: Entity, offset: SIMD3<Float>) -> Entity {
+        let parent = tutorialContainer
         effect.position = offset
         parent.addChild(effect)
         return effect
+    }
+
+    private func registerAttachment(_ effect: Entity?, anchor: HandAnchor, offset: SIMD3<Float>) {
+        guard let effect else { return }
+        effectAttachments.append(EffectAttachment(effect: effect, anchor: anchor, offset: offset))
     }
 
     private func startEffectLoop(for tutorial: HandTutorial, duration: TimeInterval) {
@@ -431,6 +485,10 @@ final class TutorialPlaybackManager {
     }
 
     private func updateEffects(for tutorial: HandTutorial, progress: Float) {
+        let animationTime = animationControllers.first?.time ?? 0
+        updateEffectAnchors(animationTime: animationTime)
+        updatePreviewBounds(animationTime: animationTime)
+
         switch tutorial.kind {
         case .fireballSummonRight:
             let visible = progress > 0.2 && progress < 0.75
@@ -507,11 +565,394 @@ final class TutorialPlaybackManager {
         activeEffect.wallRoot?.transform.rotation = simd_quatf(angle: 0, axis: [0, 1, 0])
     }
 
+    private func updateEffectAnchors(animationTime: TimeInterval) {
+        for attachment in effectAttachments {
+            applyAnchor(attachment.anchor, to: attachment.effect, offset: attachment.offset, animationTime: animationTime)
+        }
+    }
+
+    private func applyAnchor(_ anchor: HandAnchor, to effect: Entity, offset: SIMD3<Float>, animationTime: TimeInterval) {
+        if let skeletal = anchor.skeletal,
+           let jointTransform = currentJointTransform(for: skeletal, animationTime: animationTime) {
+            let rotation = jointTransform.rotation
+            let rotatedOffset = rotation.act(offset)
+            effect.position = jointTransform.translation + rotatedOffset
+            effect.orientation = rotation
+            return
+        }
+
+        guard let target = anchor.target else { return }
+
+        let bounds = target.visualBounds(relativeTo: tutorialContainer)
+        let center = (bounds.min + bounds.max) * 0.5
+        let targetTransform = target.transformMatrix(relativeTo: tutorialContainer)
+        let rotation = Transform(matrix: targetTransform).rotation
+        let rotatedOffset = rotation.act(offset)
+        effect.position = center + rotatedOffset
+        effect.orientation = rotation
+    }
+
+    private func updatePreviewBounds(animationTime: TimeInterval) {
+        let bounds: (min: SIMD3<Float>, max: SIMD3<Float>)
+        if let skeletalBounds = currentSkeletalBounds(animationTime: animationTime) {
+            bounds = skeletalBounds
+        } else {
+            let fallback = rootEntity.visualBounds(relativeTo: rootEntity)
+            bounds = (fallback.min, fallback.max)
+        }
+
+        if let currentMin = previewBoundsMin, let currentMax = previewBoundsMax {
+            previewBoundsMin = SIMD3<Float>(
+                min(currentMin.x, bounds.min.x),
+                min(currentMin.y, bounds.min.y),
+                min(currentMin.z, bounds.min.z)
+            )
+            previewBoundsMax = SIMD3<Float>(
+                max(currentMax.x, bounds.max.x),
+                max(currentMax.y, bounds.max.y),
+                max(currentMax.z, bounds.max.z)
+            )
+        } else {
+            previewBoundsMin = bounds.min
+            previewBoundsMax = bounds.max
+        }
+
+        guard let unionMin = previewBoundsMin, let unionMax = previewBoundsMax else { return }
+        let size = unionMax - unionMin + SIMD3<Float>(repeating: previewPadding)
+        previewSize = clamp(size, min: previewMinSize, max: previewMaxSize)
+    }
+
     private func setVisibility(_ entity: Entity?, isVisible: Bool) {
         entity?.isEnabled = isVisible
     }
 
     private func lerp(from: Float, to: Float, t: Float) -> Float {
         from + (to - from) * t
+    }
+
+    private func pickSideEntity(from entities: [Entity], sideTokens: [String]) -> Entity? {
+        for entity in entities {
+            let name = hierarchyName(for: entity)
+            if sideTokens.contains(where: { name.contains($0) }) {
+                return entity
+            }
+        }
+        return nil
+    }
+
+    private func hierarchyName(for entity: Entity) -> String {
+        var components: [String] = []
+        var current: Entity? = entity
+        while let node = current {
+            if !node.name.isEmpty {
+                components.append(node.name.lowercased())
+            }
+            current = node.parent
+        }
+        return components.joined(separator: "/")
+    }
+
+    private func bestFallbackEntity(from entities: [Entity]) -> Entity? {
+        let modelEntities = entities.filter { $0 is ModelEntity }
+        if let firstModel = modelEntities.first {
+            return firstModel
+        }
+        return entities.first
+    }
+
+    private func clamp(_ value: SIMD3<Float>, min minValue: SIMD3<Float>, max maxValue: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3<Float>(
+            max(minValue.x, min(value.x, maxValue.x)),
+            max(minValue.y, min(value.y, maxValue.y)),
+            max(minValue.z, min(value.z, maxValue.z))
+        )
+    }
+
+    private enum HandSide {
+        case left
+        case right
+
+        var nameToken: String {
+            switch self {
+            case .left:
+                return "left"
+            case .right:
+                return "right"
+            }
+        }
+
+        var suffixToken: String {
+            switch self {
+            case .left:
+                return "_l"
+            case .right:
+                return "_r"
+            }
+        }
+    }
+
+    private final class SkeletalAnimationState {
+        let modelEntity: ModelEntity
+        let sampledAnimation: SampledAnimation<JointTransforms>
+        let jointNames: [String]
+        let jointNameToIndex: [String: Int]
+        let parentIndices: [Int?]
+        let meshBounds: BoundingBox?
+
+        init(modelEntity: ModelEntity,
+             sampledAnimation: SampledAnimation<JointTransforms>,
+             jointNames: [String],
+             jointNameToIndex: [String: Int],
+             parentIndices: [Int?],
+             meshBounds: BoundingBox?) {
+            self.modelEntity = modelEntity
+            self.sampledAnimation = sampledAnimation
+            self.jointNames = jointNames
+            self.jointNameToIndex = jointNameToIndex
+            self.parentIndices = parentIndices
+            self.meshBounds = meshBounds
+        }
+    }
+
+    private func resolveSkeletalAnchor(for side: HandSide) -> SkeletalAnchor? {
+        var bestAnchor: SkeletalAnchor?
+        var bestScore = -1
+
+        for state in skeletalStates {
+            guard let (jointIndex, jointScore) = pickJointIndex(for: side, in: state.jointNames) else { continue }
+            let nameScore = hierarchyName(for: state.modelEntity).contains(side.nameToken) ? 2 : 0
+            let totalScore = jointScore + nameScore
+            if totalScore > bestScore {
+                bestScore = totalScore
+                bestAnchor = SkeletalAnchor(state: state, jointIndex: jointIndex)
+            }
+        }
+
+        return bestAnchor
+    }
+
+    private func pickJointIndex(for side: HandSide, in jointNames: [String]) -> (Int, Int)? {
+        var bestIndex: Int?
+        var bestScore = -1
+        let preferredSuffix = "hand\(side.suffixToken)"
+
+        for (index, name) in jointNames.enumerated() {
+            let lower = name.lowercased()
+            var score = 0
+            if lower.hasSuffix(preferredSuffix) || lower.hasSuffix("/" + preferredSuffix) {
+                score += 6
+            }
+            if lower.contains("hand") {
+                score += 2
+            }
+            if lower.contains(side.suffixToken) {
+                score += 2
+            }
+            if lower.contains("wrist") {
+                score += 1
+            }
+            if score > bestScore {
+                bestScore = score
+                bestIndex = index
+            }
+        }
+
+        guard let bestIndex, bestScore >= 3 else { return nil }
+        return (bestIndex, bestScore)
+    }
+
+    private func collectAnimations(from entity: Entity) -> [AnimationResource] {
+        var animations: [AnimationResource] = []
+        var seen = Set<ObjectIdentifier>()
+
+        func addAnimations(_ newAnimations: [AnimationResource]) {
+            for animation in newAnimations {
+                let identifier = ObjectIdentifier(animation)
+                if seen.insert(identifier).inserted {
+                    animations.append(animation)
+                }
+            }
+        }
+
+        addAnimations(entity.availableAnimations)
+        for child in entity.children {
+            addAnimations(collectAnimations(from: child))
+        }
+
+        return animations
+    }
+
+    private func buildSkeletalStates(in entity: Entity, animations: [AnimationResource]) -> [SkeletalAnimationState] {
+        let sampledAnimations = animations.compactMap { animation -> SampledAnimation<JointTransforms>? in
+            animation.definition as? SampledAnimation<JointTransforms>
+        }
+
+        guard !sampledAnimations.isEmpty else { return [] }
+
+        let modelEntities = collectEntities(from: entity).compactMap { $0 as? ModelEntity }
+        var states: [SkeletalAnimationState] = []
+
+        for modelEntity in modelEntities {
+            guard let mesh = modelEntity.model?.mesh else { continue }
+            let skeletons = mesh.contents.skeletons
+            var iterator = skeletons.makeIterator()
+
+            while let skeleton = iterator.next() {
+                guard let sampled = bestSample(for: skeleton, samples: sampledAnimations) else { continue }
+
+                let jointNames = sampled.jointNames
+                let nameToIndex = Dictionary(uniqueKeysWithValues: jointNames.enumerated().map { ($1, $0) })
+                let parentIndices = buildParentIndices(for: skeleton, jointNames: jointNames, sampledIndex: nameToIndex)
+                let bounds = modelEntity.visualBounds(relativeTo: modelEntity)
+
+                let state = SkeletalAnimationState(
+                    modelEntity: modelEntity,
+                    sampledAnimation: sampled,
+                    jointNames: jointNames,
+                    jointNameToIndex: nameToIndex,
+                    parentIndices: parentIndices,
+                    meshBounds: bounds
+                )
+                states.append(state)
+            }
+        }
+
+        return states
+    }
+
+    private func bestSample(for skeleton: MeshResource.Skeleton,
+                            samples: [SampledAnimation<JointTransforms>]) -> SampledAnimation<JointTransforms>? {
+        let jointNameSet = Set(skeleton.joints.map { $0.name.lowercased() })
+        var bestSample: SampledAnimation<JointTransforms>?
+        var bestMatch = 0
+
+        for sample in samples {
+            let matches = sample.jointNames.filter { jointNameSet.contains($0.lowercased()) }.count
+            if matches > bestMatch {
+                bestMatch = matches
+                bestSample = sample
+            }
+        }
+
+        return bestSample
+    }
+
+    private func buildParentIndices(for skeleton: MeshResource.Skeleton,
+                                    jointNames: [String],
+                                    sampledIndex: [String: Int]) -> [Int?] {
+        let skeletonNameToIndex = Dictionary(uniqueKeysWithValues: skeleton.joints.enumerated().map { ($1.name, $0) })
+        var parentIndices: [Int?] = Array(repeating: nil, count: jointNames.count)
+
+        for (sampleIndex, name) in jointNames.enumerated() {
+            guard let skeletonIndex = skeletonNameToIndex[name] else { continue }
+            guard let parentSkeletonIndex = skeleton.joints[skeletonIndex].parentIndex else { continue }
+            let parentName = skeleton.joints[parentSkeletonIndex].name
+            parentIndices[sampleIndex] = sampledIndex[parentName]
+        }
+
+        return parentIndices
+    }
+
+    private func currentJointTransform(for anchor: SkeletalAnchor, animationTime: TimeInterval) -> Transform? {
+        guard let jointTransforms = jointTransforms(for: anchor.state, animationTime: animationTime) else { return nil }
+        guard anchor.jointIndex < jointTransforms.count else { return nil }
+
+        var cache = Array<simd_float4x4?>(repeating: nil, count: jointTransforms.count)
+        let jointMatrix = jointGlobalMatrix(
+            for: anchor.jointIndex,
+            transforms: jointTransforms,
+            parentIndices: anchor.state.parentIndices,
+            cache: &cache
+        )
+
+        let modelMatrix = anchor.state.modelEntity.transformMatrix(relativeTo: tutorialContainer)
+        let worldMatrix = simd_mul(modelMatrix, jointMatrix)
+        return Transform(matrix: worldMatrix)
+    }
+
+    private func jointTransforms(for state: SkeletalAnimationState, animationTime: TimeInterval) -> JointTransforms? {
+        let frames = state.sampledAnimation.frames
+        guard !frames.isEmpty else { return nil }
+
+        let frameInterval = max(state.sampledAnimation.frameInterval, 0.001)
+        let duration = max(Float(state.sampledAnimation.duration), frameInterval * Float(frames.count))
+        let timeInClip = Float(animationTime).truncatingRemainder(dividingBy: duration)
+        let frameIndex = min(Int(timeInClip / frameInterval), frames.count - 1)
+        return frames[frameIndex]
+    }
+
+    private func jointGlobalMatrix(for jointIndex: Int,
+                                   transforms: JointTransforms,
+                                   parentIndices: [Int?],
+                                   cache: inout [simd_float4x4?]) -> simd_float4x4 {
+        if let cached = cache[jointIndex] {
+            return cached
+        }
+
+        var matrix = transforms[jointIndex].matrix
+        if jointIndex < parentIndices.count, let parentIndex = parentIndices[jointIndex] {
+            let parentMatrix = jointGlobalMatrix(
+                for: parentIndex,
+                transforms: transforms,
+                parentIndices: parentIndices,
+                cache: &cache
+            )
+            matrix = simd_mul(parentMatrix, matrix)
+        }
+
+        cache[jointIndex] = matrix
+        return matrix
+    }
+
+    private func currentSkeletalBounds(animationTime: TimeInterval) -> (min: SIMD3<Float>, max: SIMD3<Float>)? {
+        guard !skeletalStates.isEmpty else { return nil }
+
+        var minPoint = SIMD3<Float>(repeating: Float.greatestFiniteMagnitude)
+        var maxPoint = SIMD3<Float>(repeating: -Float.greatestFiniteMagnitude)
+        var hasSamples = false
+
+        for state in skeletalStates {
+            guard let jointTransforms = jointTransforms(for: state, animationTime: animationTime) else { continue }
+            let jointCount = min(jointTransforms.count, state.parentIndices.count)
+            var cache = Array<simd_float4x4?>(repeating: nil, count: jointCount)
+            let modelMatrix = state.modelEntity.transformMatrix(relativeTo: tutorialContainer)
+
+            for jointIndex in 0..<jointCount {
+                let jointMatrix = jointGlobalMatrix(
+                    for: jointIndex,
+                    transforms: jointTransforms,
+                    parentIndices: state.parentIndices,
+                    cache: &cache
+                )
+                let worldMatrix = simd_mul(modelMatrix, jointMatrix)
+                let position = SIMD3<Float>(
+                    worldMatrix.columns.3.x,
+                    worldMatrix.columns.3.y,
+                    worldMatrix.columns.3.z
+                )
+                minPoint = SIMD3<Float>(
+                    min(minPoint.x, position.x),
+                    min(minPoint.y, position.y),
+                    min(minPoint.z, position.z)
+                )
+                maxPoint = SIMD3<Float>(
+                    max(maxPoint.x, position.x),
+                    max(maxPoint.y, position.y),
+                    max(maxPoint.z, position.z)
+                )
+            }
+
+            if let bounds = state.meshBounds {
+                let extents = bounds.max - bounds.min
+                let radius = max(extents.x, max(extents.y, extents.z)) * 0.5
+                let padding = SIMD3<Float>(repeating: radius)
+                minPoint -= padding
+                maxPoint += padding
+            }
+
+            hasSamples = true
+        }
+
+        return hasSamples ? (minPoint, maxPoint) : nil
     }
 }

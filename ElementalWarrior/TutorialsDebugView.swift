@@ -57,6 +57,7 @@ struct TutorialsDebugView: View {
 
 private struct TutorialsDetailView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.openWindow) private var openWindow
     let category: TutorialCategory
     @Binding var selectedTutorial: HandTutorial?
 
@@ -83,9 +84,6 @@ private struct TutorialsDetailView: View {
                 .frame(minWidth: 220, maxWidth: 280)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    TutorialPreviewView()
-                        .frame(minHeight: 280)
-
                     if let selectedTutorial {
                         HStack(spacing: 12) {
                             if appModel.tutorialPlaybackManager.isPlaying &&
@@ -97,6 +95,7 @@ private struct TutorialsDetailView: View {
                                 .tint(.red)
                             } else {
                                 Button("Play") {
+                                    openWindow(id: "tutorialPreview")
                                     Task {
                                         await appModel.tutorialPlaybackManager.play(tutorial: selectedTutorial)
                                     }
@@ -118,6 +117,10 @@ private struct TutorialsDetailView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(.ultraThinMaterial)
                                 .cornerRadius(8)
+                        } else {
+                            Text("Preview appears in the Tutorials Preview window.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                     } else {
                         Text("Select a tutorial to preview the hand animation.")
@@ -156,32 +159,5 @@ private struct TutorialRow: View {
             }
         }
         .padding(.vertical, 4)
-    }
-}
-
-private struct TutorialPreviewView: View {
-    @Environment(AppModel.self) private var appModel
-
-    var body: some View {
-        ZStack {
-            RealityView { content in
-                content.add(appModel.tutorialPlaybackManager.rootEntity)
-            }
-
-            if !appModel.tutorialPlaybackManager.isPlaying {
-                Text("Select a tutorial and press Play.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(8)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(8)
-            }
-        }
-        .background(.black.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
-        )
     }
 }

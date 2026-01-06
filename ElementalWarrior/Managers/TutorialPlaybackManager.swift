@@ -231,8 +231,8 @@ final class TutorialPlaybackManager {
     private let wallBaseWidth: Float = 0.7
     private let wallBaseHeight: Float = 0.7
     private let wallBaseOffset = SIMD3<Float>(0, -0.08, -0.2)
-    private let stageScale: Float = 0.25
-    private let stageOffset = SIMD3<Float>(0, -0.06, -0.32)
+    private let stageScale: Float = 0.15
+    private let stageOffset = SIMD3<Float>(0, 0, 0)
 
     init() {
         rootEntity.name = "TutorialRoot"

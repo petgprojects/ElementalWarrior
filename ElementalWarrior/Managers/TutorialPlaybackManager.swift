@@ -200,8 +200,8 @@ final class TutorialPlaybackManager {
     var previewSize: SIMD3<Float> = [0.4, 0.4, 0.4]
 
     private struct HandAnchor {
-        var target: Entity?
-        var skeletal: SkeletalAnchor?
+        var target: Entity?  // Fallback: bone entity (doesn't animate, but useful for initial position)
+        var skeletal: SkeletalAnchor?  // Primary: sampled skeletal animation data
     }
 
     private struct SkeletalAnchor {
@@ -254,11 +254,13 @@ final class TutorialPlaybackManager {
     private let wallBaseWidth: Float = 0.7
     private let wallBaseHeight: Float = 0.7
     private let wallBaseOffset = SIMD3<Float>(0, -0.08, -0.2)
-    private let stageScale: Float = 0.15
+    private let baseStageScale: Float = 0.12
+    private var currentStageScale: Float = 0.12
     private let stageOffset = SIMD3<Float>(0, 0, 0)
     private let previewPadding: Float = 0.08
     private let previewMinSize: SIMD3<Float> = [0.25, 0.25, 0.25]
     private let previewMaxSize: SIMD3<Float> = [1.8, 1.8, 1.8]
+    private let windowVolume: Float = 1.2 // Usable volume inside 1.5m window (with margin)
 
     init() {
         rootEntity.name = "TutorialRoot"
@@ -269,7 +271,8 @@ final class TutorialPlaybackManager {
         stageEntity.addChild(tutorialContainer)
 
         stageEntity.position = stageOffset
-        stageEntity.scale = [stageScale, stageScale, stageScale]
+        currentStageScale = baseStageScale
+        stageEntity.scale = SIMD3<Float>(repeating: currentStageScale)
 
         addLighting()
     }
@@ -312,6 +315,10 @@ final class TutorialPlaybackManager {
             skeletalStates = buildSkeletalStates(in: entity, animations: animations)
             handTargets = resolveHandTargets(in: entity)
             activeEffect = configureEffects(for: tutorial, handTargets: handTargets)
+
+            // Calculate appropriate scale to fit animation in window
+            calculateAndApplyScale(for: entity, tutorial: tutorial)
+
             startEffectLoop(for: tutorial, duration: max(duration, 0.5))
 
             isPlaying = true
@@ -319,6 +326,40 @@ final class TutorialPlaybackManager {
             lastError = "Failed to load \(tutorial.id): \(error.localizedDescription)"
             isPlaying = false
         }
+    }
+
+    private func calculateAndApplyScale(for entity: Entity, tutorial: HandTutorial) {
+        // Get the bounds of the loaded animation content (rest pose)
+        let bounds = entity.visualBounds(relativeTo: entity)
+        let contentSize = bounds.max - bounds.min
+
+        var maxExtent = max(contentSize.x, max(contentSize.y, contentSize.z))
+
+        // IMPORTANT: Animations move beyond rest pose bounds
+        // Apply a 2x multiplier to account for animation movement range
+        maxExtent *= 2.0
+
+        // Add padding for effects that extend beyond the hand
+        switch tutorial.kind.category {
+        case .fireball, .flamethrower:
+            maxExtent += 0.5 // Extra space for fire effects
+        case .wall:
+            maxExtent = max(maxExtent, (wallBaseWidth + 0.3) * 2)
+            maxExtent = max(maxExtent, (wallBaseHeight + 0.3) * 2)
+        }
+
+        // Calculate scale to fit within window volume
+        if maxExtent > 0.01 {
+            let targetScale = windowVolume / maxExtent
+            // Use the smaller of target scale or base scale to ensure fit
+            currentStageScale = min(targetScale, baseStageScale)
+            currentStageScale = max(currentStageScale, baseStageScale * 0.3) // Min at 0.3x base scale
+        } else {
+            currentStageScale = baseStageScale
+        }
+
+        stageEntity.scale = [currentStageScale, currentStageScale, currentStageScale]
+        print("[TutorialPlayback] Rest bounds: \(contentSize), estimated max extent: \(maxExtent), applied scale: \(currentStageScale)")
     }
 
     func stop(resetTutorial: Bool = false) {
@@ -338,6 +379,10 @@ final class TutorialPlaybackManager {
         previewBoundsMax = nil
         skeletalStates.removeAll()
         isPlaying = false
+
+        // Reset stage scale to base
+        currentStageScale = baseStageScale
+        stageEntity.scale = [baseStageScale, baseStageScale, baseStageScale]
 
         if resetTutorial {
             currentTutorial = nil
@@ -363,27 +408,52 @@ final class TutorialPlaybackManager {
         var leftAnchor = HandAnchor()
         var rightAnchor = HandAnchor()
 
+        // PRIMARY: Try to resolve skeletal anchors from sampled animation data
+        // This is the ONLY reliable way to track skinned mesh animations
         if let skeletalLeft = resolveSkeletalAnchor(for: .left) {
             leftAnchor.skeletal = skeletalLeft
+            print("[TutorialPlayback] ✓ Found LEFT skeletal anchor: joint \(skeletalLeft.jointIndex) in \(skeletalLeft.state.jointNames)")
+        } else {
+            print("[TutorialPlayback] ✗ No LEFT skeletal anchor found")
         }
+
         if let skeletalRight = resolveSkeletalAnchor(for: .right) {
             rightAnchor.skeletal = skeletalRight
+            print("[TutorialPlayback] ✓ Found RIGHT skeletal anchor: joint \(skeletalRight.jointIndex) in \(skeletalRight.state.jointNames)")
+        } else {
+            print("[TutorialPlayback] ✗ No RIGHT skeletal anchor found")
         }
 
+        // Debug: print skeletal states info
+        print("[TutorialPlayback] Skeletal states count: \(skeletalStates.count)")
+        for (i, state) in skeletalStates.enumerated() {
+            print("[TutorialPlayback] State \(i): \(state.jointNames.count) joints, names: \(state.jointNames)")
+        }
+
+        // FALLBACK: Find bone entities (won't animate, but used for initial position if skeletal fails)
         let allEntities = collectEntities(from: entity)
-        let modelEntities = allEntities.filter { $0 is ModelEntity }
+        let boneEntities = allEntities.filter { !($0 is ModelEntity) && !$0.name.isEmpty }
+        let handBoneNamesLeft = ["handsmooth_left", "hand_left", "hand_l", "hand.l", "lefthand", "l_hand", "wrist_left", "wrist_l"]
+        let handBoneNamesRight = ["handsmooth_right", "hand_right", "hand_r", "hand.r", "righthand", "r_hand", "wrist_right", "wrist_r"]
 
-        if leftAnchor.skeletal == nil {
-            let leftEntity = pickSideEntity(from: modelEntities, sideTokens: ["left", "_l", "l_"])
-            leftAnchor.target = leftEntity ?? bestFallbackEntity(from: allEntities)
-        }
+        leftAnchor.target = findBestBoneEntity(from: boneEntities, boneNames: handBoneNamesLeft)
+        rightAnchor.target = findBestBoneEntity(from: boneEntities, boneNames: handBoneNamesRight)
 
-        if rightAnchor.skeletal == nil {
-            let rightEntity = pickSideEntity(from: modelEntities, sideTokens: ["right", "_r", "r_"])
-            rightAnchor.target = rightEntity ?? bestFallbackEntity(from: allEntities)
-        }
+        print("[TutorialPlayback] Fallback bone entities: left=\(leftAnchor.target?.name ?? "nil"), right=\(rightAnchor.target?.name ?? "nil")")
 
         return HandTargets(left: leftAnchor, right: rightAnchor)
+    }
+
+    private func findBestBoneEntity(from entities: [Entity], boneNames: [String]) -> Entity? {
+        for boneName in boneNames {
+            for entity in entities {
+                let entityName = entity.name.lowercased()
+                if entityName == boneName || entityName.contains(boneName) {
+                    return entity
+                }
+            }
+        }
+        return nil
     }
 
     private func collectEntities(from root: Entity) -> [Entity] {
@@ -412,30 +482,30 @@ final class TutorialPlaybackManager {
              .fireballPunchRight,
              .fireballCrossPunchBoth:
             let fireball = createRealisticFireball(scale: fireballScale)
-            effect.rightFireball = attachEffect(fireball, offset: fireballOffset)
+            effect.rightFireball = attachEffect(fireball, offset: fireballOffset, anchor: handTargets.right)
             registerAttachment(effect.rightFireball, anchor: handTargets.right, offset: fireballOffset)
         case .fireballCombineBoth:
             let leftFireball = createRealisticFireball(scale: fireballScale)
             let rightFireball = createRealisticFireball(scale: fireballScale)
             let combined = createRealisticFireball(scale: combinedFireballScale)
-            effect.leftFireball = attachEffect(leftFireball, offset: fireballOffset)
-            effect.rightFireball = attachEffect(rightFireball, offset: fireballOffset)
-            effect.combinedFireball = attachEffect(combined, offset: fireballOffset)
+            effect.leftFireball = attachEffect(leftFireball, offset: fireballOffset, anchor: handTargets.left)
+            effect.rightFireball = attachEffect(rightFireball, offset: fireballOffset, anchor: handTargets.right)
+            effect.combinedFireball = attachEffect(combined, offset: fireballOffset, anchor: handTargets.right)
             registerAttachment(effect.leftFireball, anchor: handTargets.left, offset: fireballOffset)
             registerAttachment(effect.rightFireball, anchor: handTargets.right, offset: fireballOffset)
             registerAttachment(effect.combinedFireball, anchor: handTargets.right, offset: fireballOffset)
             effect.combinedFireball?.isEnabled = false
         case .flamethrowerSummonRight:
             let stream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
-            effect.rightFlamethrower = attachEffect(stream, offset: flamethrowerOffset)
+            effect.rightFlamethrower = attachEffect(stream, offset: flamethrowerOffset, anchor: handTargets.right)
             registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
         case .flamethrowerCombineBoth:
             let leftStream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
             let rightStream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
             let combinedStream = createCombinedFlamethrowerStream(scale: combinedFlamethrowerScale)
-            effect.leftFlamethrower = attachEffect(leftStream, offset: flamethrowerOffset)
-            effect.rightFlamethrower = attachEffect(rightStream, offset: flamethrowerOffset)
-            effect.combinedFlamethrower = attachEffect(combinedStream, offset: flamethrowerOffset)
+            effect.leftFlamethrower = attachEffect(leftStream, offset: flamethrowerOffset, anchor: handTargets.left)
+            effect.rightFlamethrower = attachEffect(rightStream, offset: flamethrowerOffset, anchor: handTargets.right)
+            effect.combinedFlamethrower = attachEffect(combinedStream, offset: flamethrowerOffset, anchor: handTargets.right)
             registerAttachment(effect.leftFlamethrower, anchor: handTargets.left, offset: flamethrowerOffset)
             registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
             registerAttachment(effect.combinedFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
@@ -458,10 +528,10 @@ final class TutorialPlaybackManager {
         return effect
     }
 
-    private func attachEffect(_ effect: Entity, offset: SIMD3<Float>) -> Entity {
-        let parent = tutorialContainer
+    private func attachEffect(_ effect: Entity, offset: SIMD3<Float>, anchor: HandAnchor? = nil) -> Entity {
+        // Always add to tutorialContainer - positioning is handled by updateEffectAnchors each frame
         effect.position = offset
-        parent.addChild(effect)
+        tutorialContainer.addChild(effect)
         return effect
     }
 
@@ -478,14 +548,16 @@ final class TutorialPlaybackManager {
             while !Task.isCancelled {
                 let elapsed = CACurrentMediaTime() - startTime
                 let progress = Float((elapsed.truncatingRemainder(dividingBy: duration)) / duration)
-                self?.updateEffects(for: tutorial, progress: progress)
+                // Pass actual elapsed time for skeletal animation sampling
+                self?.updateEffects(for: tutorial, progress: progress, elapsedTime: elapsed)
                 try? await Task.sleep(for: .milliseconds(33))
             }
         }
     }
 
-    private func updateEffects(for tutorial: HandTutorial, progress: Float) {
-        let animationTime = animationControllers.first?.time ?? 0
+    private func updateEffects(for tutorial: HandTutorial, progress: Float, elapsedTime: TimeInterval = 0) {
+        // Use our tracked elapsed time instead of controller time (which returns 0)
+        let animationTime = elapsedTime
         updateEffectAnchors(animationTime: animationTime)
         updatePreviewBounds(animationTime: animationTime)
 
@@ -571,25 +643,50 @@ final class TutorialPlaybackManager {
         }
     }
 
+    private var applyAnchorDebugCounter = 0
+
     private func applyAnchor(_ anchor: HandAnchor, to effect: Entity, offset: SIMD3<Float>, animationTime: TimeInterval) {
-        if let skeletal = anchor.skeletal,
-           let jointTransform = currentJointTransform(for: skeletal, animationTime: animationTime) {
-            let rotation = jointTransform.rotation
-            let rotatedOffset = rotation.act(offset)
-            effect.position = jointTransform.translation + rotatedOffset
-            effect.orientation = rotation
-            return
+        applyAnchorDebugCounter += 1
+
+        // Debug every 30 calls (~1 second at 30fps)
+        let shouldDebug = applyAnchorDebugCounter % 30 == 1
+
+        if shouldDebug {
+            print("[TutorialPlayback] applyAnchor called: hasSkeletal=\(anchor.skeletal != nil), animTime=\(animationTime)")
         }
 
-        guard let target = anchor.target else { return }
+        // PRIMARY: Use skeletal animation sampling - this is the ONLY way to track skinned mesh animations
+        if let skeletal = anchor.skeletal {
+            if let jointTransform = currentJointTransform(for: skeletal, animationTime: animationTime) {
+                let rotatedOffset = jointTransform.rotation.act(offset)
+                effect.position = jointTransform.translation + rotatedOffset
+                effect.orientation = jointTransform.rotation
 
-        let bounds = target.visualBounds(relativeTo: tutorialContainer)
-        let center = (bounds.min + bounds.max) * 0.5
-        let targetTransform = target.transformMatrix(relativeTo: tutorialContainer)
-        let rotation = Transform(matrix: targetTransform).rotation
-        let rotatedOffset = rotation.act(offset)
-        effect.position = center + rotatedOffset
-        effect.orientation = rotation
+                if shouldDebug {
+                    print("[TutorialPlayback] ✓ Applied skeletal transform: pos=\(effect.position)")
+                }
+                return
+            } else if shouldDebug {
+                print("[TutorialPlayback] ✗ currentJointTransform returned nil!")
+            }
+        }
+
+        // FALLBACK: Use bone entity transform (static, won't animate)
+        guard let target = anchor.target else {
+            if shouldDebug {
+                print("[TutorialPlayback] ✗ No target entity, skipping")
+            }
+            return
+        }
+        let worldTransform = target.transformMatrix(relativeTo: tutorialContainer)
+        let transform = Transform(matrix: worldTransform)
+        let rotatedOffset = transform.rotation.act(offset)
+        effect.position = transform.translation + rotatedOffset
+        effect.orientation = transform.rotation
+
+        if shouldDebug {
+            print("[TutorialPlayback] Used fallback entity transform: pos=\(effect.position)")
+        }
     }
 
     private func updatePreviewBounds(animationTime: TimeInterval) {
@@ -783,22 +880,52 @@ final class TutorialPlaybackManager {
     }
 
     private func buildSkeletalStates(in entity: Entity, animations: [AnimationResource]) -> [SkeletalAnimationState] {
-        let sampledAnimations = animations.compactMap { animation -> SampledAnimation<JointTransforms>? in
-            animation.definition as? SampledAnimation<JointTransforms>
+        print("[TutorialPlayback] Building skeletal states from \(animations.count) animations")
+
+        // Try to extract SampledAnimation<JointTransforms> from each animation
+        var sampledAnimations: [SampledAnimation<JointTransforms>] = []
+        for (i, animation) in animations.enumerated() {
+            let definition = animation.definition
+            print("[TutorialPlayback] Animation \(i): definition type = \(type(of: definition))")
+
+            if let sampled = definition as? SampledAnimation<JointTransforms> {
+                print("[TutorialPlayback] ✓ Animation \(i) is SampledAnimation<JointTransforms> with \(sampled.jointNames.count) joints")
+                print("[TutorialPlayback]   Joint names: \(sampled.jointNames)")
+                print("[TutorialPlayback]   Frames: \(sampled.frames.count), duration: \(sampled.duration)")
+                sampledAnimations.append(sampled)
+            } else {
+                print("[TutorialPlayback] ✗ Animation \(i) is NOT SampledAnimation<JointTransforms>")
+            }
         }
 
-        guard !sampledAnimations.isEmpty else { return [] }
+        guard !sampledAnimations.isEmpty else {
+            print("[TutorialPlayback] ✗ No sampled skeletal animations found!")
+            return []
+        }
 
         let modelEntities = collectEntities(from: entity).compactMap { $0 as? ModelEntity }
+        print("[TutorialPlayback] Found \(modelEntities.count) model entities")
+
         var states: [SkeletalAnimationState] = []
 
         for modelEntity in modelEntities {
-            guard let mesh = modelEntity.model?.mesh else { continue }
+            guard let mesh = modelEntity.model?.mesh else {
+                print("[TutorialPlayback] Model entity \(modelEntity.name) has no mesh")
+                continue
+            }
+
             let skeletons = mesh.contents.skeletons
+            var skeletonCount = 0
             var iterator = skeletons.makeIterator()
 
             while let skeleton = iterator.next() {
-                guard let sampled = bestSample(for: skeleton, samples: sampledAnimations) else { continue }
+                skeletonCount += 1
+                print("[TutorialPlayback] Found skeleton with \(skeleton.joints.count) joints in \(modelEntity.name)")
+
+                guard let sampled = bestSample(for: skeleton, samples: sampledAnimations) else {
+                    print("[TutorialPlayback] ✗ No matching sampled animation for skeleton")
+                    continue
+                }
 
                 let jointNames = sampled.jointNames
                 let nameToIndex = Dictionary(uniqueKeysWithValues: jointNames.enumerated().map { ($1, $0) })
@@ -814,9 +941,15 @@ final class TutorialPlaybackManager {
                     meshBounds: bounds
                 )
                 states.append(state)
+                print("[TutorialPlayback] ✓ Created skeletal state for \(modelEntity.name)")
+            }
+
+            if skeletonCount == 0 {
+                print("[TutorialPlayback] Model entity \(modelEntity.name) has no skeletons")
             }
         }
 
+        print("[TutorialPlayback] Built \(states.count) skeletal states")
         return states
     }
 
@@ -853,9 +986,27 @@ final class TutorialPlaybackManager {
         return parentIndices
     }
 
+    private var lastDebugTime: TimeInterval = -10  // Start negative so first call triggers debug
+
     private func currentJointTransform(for anchor: SkeletalAnchor, animationTime: TimeInterval) -> Transform? {
-        guard let jointTransforms = jointTransforms(for: anchor.state, animationTime: animationTime) else { return nil }
-        guard anchor.jointIndex < jointTransforms.count else { return nil }
+        let shouldDebug = animationTime - lastDebugTime > 1.0
+
+        guard let jointTransforms = jointTransforms(for: anchor.state, animationTime: animationTime) else {
+            if shouldDebug {
+                print("[TutorialPlayback] ✗ jointTransforms returned nil at time \(animationTime)")
+                print("[TutorialPlayback]   frames.count=\(anchor.state.sampledAnimation.frames.count)")
+                lastDebugTime = animationTime
+            }
+            return nil
+        }
+
+        guard anchor.jointIndex < jointTransforms.count else {
+            if shouldDebug {
+                print("[TutorialPlayback] ✗ Joint index \(anchor.jointIndex) out of bounds (\(jointTransforms.count) joints)")
+                lastDebugTime = animationTime
+            }
+            return nil
+        }
 
         var cache = Array<simd_float4x4?>(repeating: nil, count: jointTransforms.count)
         let jointMatrix = jointGlobalMatrix(
@@ -867,7 +1018,17 @@ final class TutorialPlaybackManager {
 
         let modelMatrix = anchor.state.modelEntity.transformMatrix(relativeTo: tutorialContainer)
         let worldMatrix = simd_mul(modelMatrix, jointMatrix)
-        return Transform(matrix: worldMatrix)
+        let transform = Transform(matrix: worldMatrix)
+
+        if shouldDebug {
+            print("[TutorialPlayback] ✓ currentJointTransform success:")
+            print("[TutorialPlayback]   animTime=\(animationTime), jointIndex=\(anchor.jointIndex)")
+            print("[TutorialPlayback]   jointMatrix translation=\(SIMD3<Float>(jointMatrix.columns.3.x, jointMatrix.columns.3.y, jointMatrix.columns.3.z))")
+            print("[TutorialPlayback]   worldMatrix translation=\(transform.translation)")
+            lastDebugTime = animationTime
+        }
+
+        return transform
     }
 
     private func jointTransforms(for state: SkeletalAnimationState, animationTime: TimeInterval) -> JointTransforms? {

@@ -38,7 +38,7 @@ struct ElementalWarriorApp: App {
                 .environment(appModel)
         }
         .windowStyle(.volumetric)
-        .defaultSize(width: 0.45, height: 0.45, depth: 0.45, in: .meters)
+        .defaultSize(width: 1.5, height: 1.5, depth: 1.5, in: .meters)
 
         ImmersiveSpace(id: "arena") {
             ArenaImmersiveView()

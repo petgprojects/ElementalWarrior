@@ -19,6 +19,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 ### Current Implementation
 
 - **Home Interface**: Frosted glass home window with Start/Quit controls and a Debug shortcut
+- **Debug Tutorials**: In-debug tutorial player with looping hand-animation previews for fireball, flamethrower, and wall gestures
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming
@@ -102,7 +103,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 #### Views
 
 - **HomeView** (`HomeView.swift`): Entry point with frosted glass home UI, Start/Quit controls, and Debug shortcut
-- **DebugWindowView** (`DebugWindowView.swift`): Sidebar-tabbed debug window for hand state, room scanning, and tuning options
+- **DebugWindowView** (`DebugWindowView.swift`): Sidebar-tabbed debug window for hand state, room scanning, tutorial playback, and tuning options
 - **ArenaImmersiveView** (`ArenaImmersiveView.swift`): Immersive passthrough environment with hand tracking
 
 #### Hand Tracking System (Managers/)
@@ -157,9 +158,11 @@ ElementalWarrior/
 │   ├── AppModel.swift                  # App-wide state management
 │   ├── HomeView.swift                  # Main menu interface
 │   ├── ArenaImmersiveView.swift        # Immersive view setup
+│   ├── TutorialsDebugView.swift        # Debug tutorial player UI
 │   ├── Info.plist                      # App permissions (hand/world sensing)
 │   ├── Managers/
 │   │   ├── HandTrackingManager.swift   # Central hand tracking orchestrator
+│   │   ├── TutorialPlaybackManager.swift # Tutorial animation playback and VFX previews
 │   │   ├── GestureTypes.swift          # Shared types and constants
 │   │   ├── GestureSettings.swift       # Tunable gesture constants for the debug window
 │   │   ├── GestureDetection.swift      # Gesture recognition algorithms

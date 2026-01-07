@@ -1,5 +1,7 @@
 """
-Memvid storage - stores git commits in memvid format for LLM retrieval.
+Memvid storage - stores git commits in mv2 format for LLM retrieval.
+
+Uses the new memvid-sdk with the mv2 single-file format.
 """
 
 import json
@@ -8,7 +10,7 @@ from typing import Optional
 from dataclasses import asdict
 
 try:
-    from memvid import MemvidEncoder, MemvidRetriever
+    from memvid_sdk import create, open as memvid_open
     MEMVID_AVAILABLE = True
 except ImportError:
     MEMVID_AVAILABLE = False
@@ -18,9 +20,10 @@ from .extractor import CommitData
 
 class GitMemvidStorage:
     """
-    Stores git commit history in memvid format.
+    Stores git commit history in memvid mv2 format.
 
-    Uses the memvid library to encode commits as searchable video frames.
+    Uses the memvid-sdk to create a single .mv2 file with embedded
+    search indices for fast retrieval.
     """
 
     def __init__(self, output_dir: Path):
@@ -28,49 +31,65 @@ class GitMemvidStorage:
         Initialize storage.
 
         Args:
-            output_dir: Directory to store the memvid files
+            output_dir: Directory to store the mv2 file
         """
         if not MEMVID_AVAILABLE:
             raise ImportError(
-                "memvid library not installed. Install with: pip install memvid"
+                "memvid-sdk not installed. Install with: pip install memvid-sdk"
             )
 
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.video_path = self.output_dir / "commits.mp4"
-        self.index_path = self.output_dir / "commits_index.json"
+        self.mv2_path = self.output_dir / "commits.mv2"
         self.metadata_path = self.output_dir / "commits_metadata.json"
 
     def build_from_commits(
         self,
         commits: list[CommitData],
-        repo_name: str = "unknown",
-        chunk_size: int = 1000
+        repo_name: str = "unknown"
     ) -> dict:
         """
-        Build memvid storage from a list of commits.
+        Build mv2 storage from a list of commits.
 
         Args:
             commits: List of CommitData objects
             repo_name: Name of the repository for metadata
-            chunk_size: Characters per chunk for encoding
 
         Returns:
             Statistics about the stored data
         """
-        encoder = MemvidEncoder()
+        # Create new mv2 file
+        mem = create(str(self.mv2_path))
 
-        # Create chunks from commits
-        chunks = []
+        # Enable lexical search for exact matching
+        mem.enable_lex()
+
         metadata_list = []
 
         for commit in commits:
-            # Create the main document
+            # Create the searchable document
             doc = commit.to_document()
-            chunks.append(doc)
 
-            # Store metadata separately for later retrieval
+            # Store in mv2 with metadata
+            mem.put(
+                title=f"{commit.short_hash}: {commit.subject[:50]}",
+                label="commit",
+                text=doc,
+                metadata={
+                    "hash": commit.hash,
+                    "short_hash": commit.short_hash,
+                    "author": commit.author_name,
+                    "email": commit.author_email,
+                    "date": commit.date,
+                    "timestamp": commit.timestamp,
+                    "files_changed": len(commit.files_changed),
+                    "insertions": commit.insertions,
+                    "deletions": commit.deletions
+                }
+            )
+
+            # Store metadata for export
             metadata_list.append({
                 "hash": commit.hash,
                 "short_hash": commit.short_hash,
@@ -84,13 +103,7 @@ class GitMemvidStorage:
                 "deletions": commit.deletions
             })
 
-        # Add chunks to encoder
-        encoder.add_chunks(chunks)
-
-        # Build the video
-        encoder.build_video(str(self.video_path), str(self.index_path))
-
-        # Save metadata
+        # Save metadata separately for quick access
         full_metadata = {
             "repo_name": repo_name,
             "total_commits": len(commits),
@@ -106,17 +119,16 @@ class GitMemvidStorage:
 
         return {
             "commits_stored": len(commits),
-            "video_path": str(self.video_path),
-            "index_path": str(self.index_path),
+            "mv2_path": str(self.mv2_path),
             "metadata_path": str(self.metadata_path)
         }
 
 
 class GitMemvidRetriever:
     """
-    Retrieves commit context from memvid storage.
+    Retrieves commit context from mv2 storage.
 
-    Provides semantic search over git history for LLM context.
+    Provides hybrid search (lexical + semantic) over git history.
     """
 
     def __init__(self, storage_dir: Path):
@@ -124,25 +136,22 @@ class GitMemvidRetriever:
         Initialize retriever from existing storage.
 
         Args:
-            storage_dir: Directory containing memvid files
+            storage_dir: Directory containing mv2 file
         """
         if not MEMVID_AVAILABLE:
             raise ImportError(
-                "memvid library not installed. Install with: pip install memvid"
+                "memvid-sdk not installed. Install with: pip install memvid-sdk"
             )
 
         self.storage_dir = Path(storage_dir)
-        self.video_path = self.storage_dir / "commits.mp4"
-        self.index_path = self.storage_dir / "commits_index.json"
+        self.mv2_path = self.storage_dir / "commits.mv2"
         self.metadata_path = self.storage_dir / "commits_metadata.json"
 
-        if not self.video_path.exists():
-            raise FileNotFoundError(f"No memvid storage found at {storage_dir}")
+        if not self.mv2_path.exists():
+            raise FileNotFoundError(f"No mv2 storage found at {storage_dir}")
 
-        self.retriever = MemvidRetriever(
-            str(self.video_path),
-            str(self.index_path)
-        )
+        # Open existing mv2 file
+        self.mem = memvid_open(str(self.mv2_path))
 
         # Load metadata
         if self.metadata_path.exists():
@@ -155,7 +164,7 @@ class GitMemvidRetriever:
         self,
         query: str,
         top_k: int = 5,
-        min_score: float = 0.0
+        mode: str = "hybrid"
     ) -> list[dict]:
         """
         Search for commits matching a query.
@@ -163,27 +172,30 @@ class GitMemvidRetriever:
         Args:
             query: Natural language query (e.g., "authentication changes")
             top_k: Number of results to return
-            min_score: Minimum similarity score threshold
+            mode: Search mode - "hybrid" (default), "lex" (lexical), or "sem" (semantic)
 
         Returns:
             List of matching commits with scores
         """
-        results = self.retriever.search(query, top_k=top_k)
+        # Use memvid's find method
+        results = self.mem.find(query, k=top_k, mode=mode)
 
         output = []
-        for chunk, score in results:
-            if score >= min_score:
-                output.append({
-                    "content": chunk,
-                    "score": score
-                })
+        for result in results:
+            output.append({
+                "content": result.get("text", ""),
+                "score": result.get("score", 0),
+                "title": result.get("title", ""),
+                "metadata": result.get("metadata", {})
+            })
 
         return output
 
     def get_context(
         self,
         query: str,
-        max_tokens: int = 4000
+        max_tokens: int = 4000,
+        top_k: int = 10
     ) -> str:
         """
         Get formatted context for an LLM prompt.
@@ -191,11 +203,12 @@ class GitMemvidRetriever:
         Args:
             query: The query to search for
             max_tokens: Approximate maximum tokens in output
+            top_k: Number of results to include
 
         Returns:
             Formatted context string ready for LLM consumption
         """
-        context = self.retriever.get_context(query, max_tokens=max_tokens)
+        results = self.search(query, top_k=top_k)
 
         header = f"""## Git History Context
 
@@ -208,7 +221,20 @@ Query: "{query}"
 ### Relevant Commits:
 
 """
-        return header + context
+        # Estimate ~4 chars per token
+        max_chars = max_tokens * 4
+        context = header
+
+        for result in results:
+            content = result.get("content", "")
+            if len(context) + len(content) > max_chars:
+                remaining = max_chars - len(context) - 50
+                if remaining > 200:
+                    context += content[:remaining] + "\n... (truncated)\n"
+                break
+            context += content + "\n\n---\n\n"
+
+        return context
 
     def search_by_author(self, author: str, top_k: int = 10) -> list[dict]:
         """Search for commits by a specific author."""
@@ -218,24 +244,12 @@ Query: "{query}"
         """Search for commits that modified a specific file."""
         return self.search(f"file: {filepath}", top_k=top_k)
 
-    def search_by_date_range(
-        self,
-        start_date: str,
-        end_date: str,
-        query: str = "",
-        top_k: int = 10
-    ) -> list[dict]:
-        """Search within a date range."""
-        date_query = f"date: {start_date} to {end_date}"
-        if query:
-            date_query = f"{query} {date_query}"
-        return self.search(date_query, top_k=top_k)
-
     def get_stats(self) -> dict:
         """Get statistics about the indexed repository."""
         return {
             "repo_name": self.metadata.get("repo_name"),
             "total_commits": self.metadata.get("total_commits"),
             "date_range": self.metadata.get("date_range"),
-            "storage_path": str(self.storage_dir)
+            "storage_path": str(self.storage_dir),
+            "format": "mv2"
         }

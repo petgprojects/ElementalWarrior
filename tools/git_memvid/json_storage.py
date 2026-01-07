@@ -202,7 +202,15 @@ def create_retriever(storage_dir: Path):
     """Auto-detect and create the appropriate retriever."""
     storage_dir = Path(storage_dir)
 
-    # Check for memvid storage first
+    # Check for mv2 storage first (new format)
+    if (storage_dir / "commits.mv2").exists():
+        try:
+            from .storage import GitMemvidRetriever
+            return GitMemvidRetriever(storage_dir)
+        except ImportError:
+            pass
+
+    # Check for legacy mp4 storage
     if (storage_dir / "commits.mp4").exists():
         try:
             from .storage import GitMemvidRetriever

@@ -178,8 +178,10 @@ def cmd_stats(args):
     print(f"Storage path: {stats.get('storage_path', 'Unknown')}")
 
     # Detect backend type
-    if (storage_path / "commits.mp4").exists():
-        print(f"Backend: memvid")
+    if (storage_path / "commits.mv2").exists():
+        print(f"Backend: memvid (mv2)")
+    elif (storage_path / "commits.mp4").exists():
+        print(f"Backend: memvid (mp4 legacy)")
     elif (storage_path / "commits.json").exists():
         print(f"Backend: json")
 
@@ -242,9 +244,9 @@ def main():
     )
     index_parser.add_argument(
         "--backend",
-        choices=["json", "memvid"],
-        default="json",
-        help="Storage backend: json (default, no deps) or memvid (semantic search)"
+        choices=["memvid", "json"],
+        default="memvid",
+        help="Storage backend: memvid (default, mv2 format) or json (no deps)"
     )
     index_parser.add_argument(
         "--since",

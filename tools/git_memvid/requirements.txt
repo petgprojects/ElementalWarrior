@@ -1,0 +1,2 @@
+# Git-memvid dependencies
+memvid>=0.1.0

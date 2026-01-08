@@ -147,13 +147,35 @@ enum HandTutorialKind: String, CaseIterable, Hashable {
     }
 
     var loopDuration: TimeInterval {
-        switch category {
-        case .fireball:
+        switch self {
+        case .fireballSummonRight:
             return 4.0
-        case .flamethrower:
+        case .fireballMaintainRight:
             return 5.0
-        case .wall:
+        case .fireballFollowRight:
+            return 7.0
+        case .fireballPunchRight:
+            return 6.0
+        case .fireballCrossPunchBoth:
+            return 3.66
+        case .fireballCombineBoth:
+            return 6.0
+        case .flamethrowerSummonRight:
             return 5.0
+        case .flamethrowerCombineBoth:
+            return 8.0
+        case .wallSummonBoth:
+            return 4.0
+        case .wallHeightBoth:
+            return 5.0
+        case .wallLocationBoth:
+            return 7.0
+        case .wallWidthBoth:
+            return 7.0
+        case .wallRotationBoth:
+            return 6.0
+        case .wallConfirmBoth:
+            return 7.0
         }
     }
 }
@@ -200,7 +222,7 @@ final class TutorialPlaybackManager {
     var previewSize: SIMD3<Float> = [0.4, 0.4, 0.4]
 
     private struct HandAnchor {
-        var target: Entity?  // Fallback: bone entity (doesn't animate, but useful for initial position)
+        var target: Entity?  // Fallback entity (non-skeletal)
         var skeletal: SkeletalAnchor?  // Primary: sampled skeletal animation data
     }
 
@@ -218,6 +240,8 @@ final class TutorialPlaybackManager {
         var effect: Entity
         var anchor: HandAnchor
         var offset: SIMD3<Float>
+        var isTracking: Bool = true
+        var frozenTransform: Transform?
     }
 
     private struct ActiveEffect {
@@ -254,6 +278,14 @@ final class TutorialPlaybackManager {
     private let wallBaseWidth: Float = 0.7
     private let wallBaseHeight: Float = 0.7
     private let wallBaseOffset = SIMD3<Float>(0, -0.08, -0.2)
+    private let wallMinHeight: Float = 0.06
+    private let wallWidthWideScale: Float = 1.5
+    private let wallWidthNarrowScale: Float = 0.6
+    private let wallHeightHighScale: Float = 1.35
+    private let wallHeightLowScale: Float = 0.7
+    private let wallMoveOffsetX: Float = 0.18
+    private let wallMoveOffsetZ: Float = 0.15
+    private let wallRotationRadians: Float = 0.6
     private let baseStageScale: Float = 0.12
     private var currentStageScale: Float = 0.12
     private let stageOffset = SIMD3<Float>(0, 0, 0)
@@ -307,7 +339,6 @@ final class TutorialPlaybackManager {
                 }
             }
 
-            let duration = tutorial.kind.loopDuration
             previewBoundsMin = nil
             previewBoundsMax = nil
             previewSize = [0.4, 0.4, 0.4]
@@ -315,40 +346,12 @@ final class TutorialPlaybackManager {
             skeletalStates = buildSkeletalStates(in: entity, animations: animations)
             handTargets = resolveHandTargets(in: entity)
 
-            // Build gesture joint indices for each hand
-            gestureDetectionAvailable = false
-            if let rightSkeletal = handTargets.right.skeletal {
-                // Print ALL joint names for debugging
-                print("[TutorialPlayback] Available joint names in animation:")
-                for (i, name) in rightSkeletal.state.jointNames.enumerated() {
-                    print("[TutorialPlayback]   [\(i)] \(name)")
-                }
-
-                rightHandGestureJoints = buildGestureJointIndices(from: rightSkeletal.state.jointNames, for: .right)
-                print("[TutorialPlayback] Right hand gesture joints: wrist=\(rightHandGestureJoints.wrist ?? -1), middleKnuckle=\(rightHandGestureJoints.middleKnuckle ?? -1), middleTip=\(rightHandGestureJoints.middleTip ?? -1)")
-
-                // Check if we have minimum required joints for gesture detection
-                if rightHandGestureJoints.wrist != nil {
-                    gestureDetectionAvailable = true
-                    print("[TutorialPlayback] ✓ Gesture detection ENABLED")
-                } else {
-                    print("[TutorialPlayback] ✗ Gesture detection DISABLED - missing wrist joint, using timeline fallback")
-                }
-            }
-            if let leftSkeletal = handTargets.left.skeletal {
-                leftHandGestureJoints = buildGestureJointIndices(from: leftSkeletal.state.jointNames, for: .left)
-                print("[TutorialPlayback] Left hand gesture joints: wrist=\(leftHandGestureJoints.wrist ?? -1), middleKnuckle=\(leftHandGestureJoints.middleKnuckle ?? -1), middleTip=\(leftHandGestureJoints.middleTip ?? -1)")
-            }
-
-            // Reset punch state tracking
-            punchState = PunchTutorialState()
-
             activeEffect = configureEffects(for: tutorial, handTargets: handTargets)
 
             // Calculate appropriate scale to fit animation in window
             calculateAndApplyScale(for: entity, tutorial: tutorial)
 
-            startEffectLoop(for: tutorial, duration: max(duration, 0.5))
+            startEffectLoop(for: tutorial)
 
             isPlaying = true
         } catch {
@@ -437,52 +440,51 @@ final class TutorialPlaybackManager {
         var leftAnchor = HandAnchor()
         var rightAnchor = HandAnchor()
 
-        // PRIMARY: Try to resolve skeletal anchors from sampled animation data
-        // This is the ONLY reliable way to track skinned mesh animations
-        if let skeletalLeft = resolveSkeletalAnchor(for: .left) {
-            leftAnchor.skeletal = skeletalLeft
-            print("[TutorialPlayback] ✓ Found LEFT skeletal anchor: joint \(skeletalLeft.jointIndex) in \(skeletalLeft.state.jointNames)")
+        // PRIMARY: Resolve skeletal anchors without relying on joint names.
+        // Pick a stable joint per skeletal state and assign sides by X position.
+        var skeletalCandidates: [(anchor: SkeletalAnchor, x: Float)] = []
+        for state in skeletalStates {
+            guard let jointIndex = preferredJointIndex(for: state) else { continue }
+            let anchor = SkeletalAnchor(state: state, jointIndex: jointIndex)
+            let xPosition: Float
+            if let transform = currentJointTransform(for: anchor, animationTime: 0) {
+                xPosition = transform.translation.x
+            } else {
+                xPosition = state.modelEntity.transformMatrix(relativeTo: tutorialContainer).columns.3.x
+            }
+            skeletalCandidates.append((anchor: anchor, x: xPosition))
+        }
+
+        if skeletalCandidates.count == 1 {
+            rightAnchor.skeletal = skeletalCandidates[0].anchor
+            print("[TutorialPlayback] ✓ Assigned single skeletal anchor as RIGHT (joint \(skeletalCandidates[0].anchor.jointIndex))")
+        } else if skeletalCandidates.count >= 2 {
+            let sorted = skeletalCandidates.sorted { $0.x < $1.x }
+            leftAnchor.skeletal = sorted.first?.anchor
+            rightAnchor.skeletal = sorted.last?.anchor
+            if let left = leftAnchor.skeletal {
+                print("[TutorialPlayback] ✓ Assigned LEFT skeletal anchor (joint \(left.jointIndex))")
+            }
+            if let right = rightAnchor.skeletal {
+                print("[TutorialPlayback] ✓ Assigned RIGHT skeletal anchor (joint \(right.jointIndex))")
+            }
         } else {
-            print("[TutorialPlayback] ✗ No LEFT skeletal anchor found")
+            print("[TutorialPlayback] ✗ No skeletal anchors found")
         }
 
-        if let skeletalRight = resolveSkeletalAnchor(for: .right) {
-            rightAnchor.skeletal = skeletalRight
-            print("[TutorialPlayback] ✓ Found RIGHT skeletal anchor: joint \(skeletalRight.jointIndex) in \(skeletalRight.state.jointNames)")
-        } else {
-            print("[TutorialPlayback] ✗ No RIGHT skeletal anchor found")
-        }
-
-        // Debug: print skeletal states info
-        print("[TutorialPlayback] Skeletal states count: \(skeletalStates.count)")
-        for (i, state) in skeletalStates.enumerated() {
-            print("[TutorialPlayback] State \(i): \(state.jointNames.count) joints, names: \(state.jointNames)")
-        }
-
-        // FALLBACK: Find bone entities (won't animate, but used for initial position if skeletal fails)
-        let allEntities = collectEntities(from: entity)
-        let boneEntities = allEntities.filter { !($0 is ModelEntity) && !$0.name.isEmpty }
-        let handBoneNamesLeft = ["handsmooth_left", "hand_left", "hand_l", "hand.l", "lefthand", "l_hand", "wrist_left", "wrist_l"]
-        let handBoneNamesRight = ["handsmooth_right", "hand_right", "hand_r", "hand.r", "righthand", "r_hand", "wrist_right", "wrist_r"]
-
-        leftAnchor.target = findBestBoneEntity(from: boneEntities, boneNames: handBoneNamesLeft)
-        rightAnchor.target = findBestBoneEntity(from: boneEntities, boneNames: handBoneNamesRight)
-
-        print("[TutorialPlayback] Fallback bone entities: left=\(leftAnchor.target?.name ?? "nil"), right=\(rightAnchor.target?.name ?? "nil")")
-
-        return HandTargets(left: leftAnchor, right: rightAnchor)
-    }
-
-    private func findBestBoneEntity(from entities: [Entity], boneNames: [String]) -> Entity? {
-        for boneName in boneNames {
-            for entity in entities {
-                let entityName = entity.name.lowercased()
-                if entityName == boneName || entityName.contains(boneName) {
-                    return entity
-                }
+        // FALLBACK: Use model entities by position if skeletal anchors are unavailable.
+        let modelEntities = collectEntities(from: entity).compactMap { $0 as? ModelEntity }
+        if !modelEntities.isEmpty && (leftAnchor.skeletal == nil || rightAnchor.skeletal == nil) {
+            let sorted = modelEntities.sorted { entityCenterX($0) < entityCenterX($1) }
+            if leftAnchor.skeletal == nil {
+                leftAnchor.target = sorted.first
+            }
+            if rightAnchor.skeletal == nil {
+                rightAnchor.target = sorted.last
             }
         }
-        return nil
+
+        return HandTargets(left: leftAnchor, right: rightAnchor)
     }
 
     private func collectEntities(from root: Entity) -> [Entity] {
@@ -569,173 +571,234 @@ final class TutorialPlaybackManager {
         effectAttachments.append(EffectAttachment(effect: effect, anchor: anchor, offset: offset))
     }
 
-    private func startEffectLoop(for tutorial: HandTutorial, duration: TimeInterval) {
+    private func setTracking(_ effect: Entity?, isTracking: Bool) {
+        guard let effect else { return }
+        let targetID = ObjectIdentifier(effect)
+        for index in effectAttachments.indices {
+            if ObjectIdentifier(effectAttachments[index].effect) == targetID {
+                if effectAttachments[index].isTracking != isTracking {
+                    effectAttachments[index].isTracking = isTracking
+                    if isTracking {
+                        effectAttachments[index].frozenTransform = nil
+                    } else {
+                        effectAttachments[index].frozenTransform = Transform(
+                            scale: effect.scale,
+                            rotation: effect.orientation,
+                            translation: effect.position
+                        )
+                    }
+                }
+                break
+            }
+        }
+    }
+
+    private func startEffectLoop(for tutorial: HandTutorial) {
         effectTask?.cancel()
 
         let startTime = CACurrentMediaTime()
         effectTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 let elapsed = CACurrentMediaTime() - startTime
-                let progress = Float((elapsed.truncatingRemainder(dividingBy: duration)) / duration)
-                // Pass actual elapsed time for skeletal animation sampling
-                self?.updateEffects(for: tutorial, progress: progress, elapsedTime: elapsed)
+                self?.updateEffects(for: tutorial, elapsedTime: elapsed)
                 try? await Task.sleep(for: .milliseconds(33))
             }
         }
     }
 
-    private func updateEffects(for tutorial: HandTutorial, progress: Float, elapsedTime: TimeInterval = 0) {
+    private func updateEffects(for tutorial: HandTutorial, elapsedTime: TimeInterval = 0) {
         // Use our tracked elapsed time instead of controller time (which returns 0)
         let animationTime = elapsedTime
+        let duration = max(tutorial.kind.loopDuration, 0.001)
+        let timeInLoop = elapsedTime.truncatingRemainder(dividingBy: duration)
         updateEffectAnchors(animationTime: animationTime)
         updatePreviewBounds(animationTime: animationTime)
 
         switch tutorial.kind {
         case .fireballSummonRight:
-            let visible: Bool
-            if gestureDetectionAvailable {
-                let gesture = detectGestureState(for: .right, animationTime: animationTime)
-                visible = gesture.isPalmUp && gesture.isHandOpen
-            } else {
-                // Fallback to timeline-based logic
-                visible = progress > 0.2 && progress < 0.75
-            }
-            setVisibility(activeEffect.rightFireball, isVisible: visible)
-        case .fireballMaintainRight,
-             .fireballFollowRight,
-             .fireballCrossPunchBoth:
-            setVisibility(activeEffect.rightFireball, isVisible: true)
+            let show = timeInRange(timeInLoop, start: 1.0, end: 3.0)
+            setVisibility(activeEffect.rightFireball, isVisible: show)
+            setTracking(activeEffect.rightFireball, isTracking: true)
+        case .fireballMaintainRight:
+            let show = timeInRange(timeInLoop, start: 1.0, end: 5.0)
+            setVisibility(activeEffect.rightFireball, isVisible: show)
+            let shouldTrack = timeInLoop < 1.0
+            setTracking(activeEffect.rightFireball, isTracking: shouldTrack)
+        case .fireballFollowRight:
+            let show = timeInRange(timeInLoop, start: 1.0, end: 5.0)
+            setVisibility(activeEffect.rightFireball, isVisible: show)
+            setTracking(activeEffect.rightFireball, isTracking: true)
         case .fireballPunchRight:
-            updateFireballPunchTutorial(progress: progress, animationTime: animationTime)
+            let show = timeInRange(timeInLoop, start: 1.0, end: 3.66)
+            setVisibility(activeEffect.rightFireball, isVisible: show)
+            let shouldTrack = timeInLoop < 1.0 || timeInLoop >= 3.66
+            setTracking(activeEffect.rightFireball, isTracking: shouldTrack)
+        case .fireballCrossPunchBoth:
+            let show = timeInRange(timeInLoop, start: 1.0, end: 2.33)
+            setVisibility(activeEffect.rightFireball, isVisible: show)
+            setTracking(activeEffect.rightFireball, isTracking: true)
         case .fireballCombineBoth:
-            let useCombined = progress > 0.55
-            setVisibility(activeEffect.leftFireball, isVisible: !useCombined)
-            setVisibility(activeEffect.rightFireball, isVisible: !useCombined)
-            setVisibility(activeEffect.combinedFireball, isVisible: useCombined)
+            let separate = timeInRange(timeInLoop, start: 1.0, end: 1.33)
+            let combined = timeInRange(timeInLoop, start: 1.33, end: 5.33)
+            setVisibility(activeEffect.leftFireball, isVisible: separate)
+            setVisibility(activeEffect.rightFireball, isVisible: separate)
+            setVisibility(activeEffect.combinedFireball, isVisible: combined)
+            setTracking(activeEffect.leftFireball, isTracking: true)
+            setTracking(activeEffect.rightFireball, isTracking: true)
+            setTracking(activeEffect.combinedFireball, isTracking: true)
         case .flamethrowerSummonRight:
-            setVisibility(activeEffect.rightFlamethrower, isVisible: true)
+            let show = timeInRange(timeInLoop, start: 1.0, end: 4.0)
+            setVisibility(activeEffect.rightFlamethrower, isVisible: show)
         case .flamethrowerCombineBoth:
-            let combined = progress > 0.45 && progress < 0.75
-            setVisibility(activeEffect.leftFlamethrower, isVisible: !combined)
-            setVisibility(activeEffect.rightFlamethrower, isVisible: !combined)
+            let separate = timeInRange(timeInLoop, start: 1.0, end: 3.0)
+                || timeInRange(timeInLoop, start: 5.0, end: 7.0)
+            let combined = timeInRange(timeInLoop, start: 3.0, end: 5.0)
+            setVisibility(activeEffect.leftFlamethrower, isVisible: separate)
+            setVisibility(activeEffect.rightFlamethrower, isVisible: separate)
             setVisibility(activeEffect.combinedFlamethrower, isVisible: combined)
         case .wallSummonBoth:
-            let height = lerp(from: 0.15, to: wallBaseHeight, t: min(progress * 1.2, 1.0))
+            let isVisible = timeInLoop < 4.0
+            activeEffect.wallRoot?.isEnabled = isVisible
+            let height: Float
+            if timeInLoop < 1.0 {
+                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
+            } else if timeInLoop < 2.66 {
+                height = wallBaseHeight
+            } else {
+                let t = segmentProgress(time: timeInLoop, start: 2.66, end: 4.0)
+                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+            }
             updateWall(width: wallBaseWidth, height: height)
             resetWallTransform()
         case .wallHeightBoth:
-            let phase = 2 * Float.pi * progress
-            let height = wallBaseHeight * (0.6 + 0.4 * (0.5 + 0.5 * sin(phase)))
+            let isVisible = timeInLoop < 5.0
+            activeEffect.wallRoot?.isEnabled = isVisible
+            let highHeight = wallBaseHeight * wallHeightHighScale
+            let lowHeight = wallBaseHeight * wallHeightLowScale
+            let height: Float
+            if timeInLoop < 1.0 {
+                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
+            } else if timeInLoop < 2.0 {
+                height = wallBaseHeight
+            } else if timeInLoop < 3.0 {
+                let t = segmentProgress(time: timeInLoop, start: 2.0, end: 3.0)
+                height = lerp(from: wallBaseHeight, to: highHeight, t: t)
+            } else if timeInLoop < 4.0 {
+                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 4.0)
+                height = lerp(from: highHeight, to: lowHeight, t: t)
+            } else {
+                let t = segmentProgress(time: timeInLoop, start: 4.0, end: 5.0)
+                height = lerp(from: lowHeight, to: wallMinHeight, t: t)
+            }
             updateWall(width: wallBaseWidth, height: height)
             resetWallTransform()
         case .wallLocationBoth:
-            let phase = 2 * Float.pi * progress
-            let offsetX = 0.15 * sin(phase)
-            let offsetZ = 0.12 * cos(phase)
-            updateWall(width: wallBaseWidth, height: wallBaseHeight)
-            activeEffect.wallRoot?.position = activeEffect.wallBasePosition + SIMD3<Float>(offsetX, 0, offsetZ)
+            let isVisible = timeInLoop < 6.0
+            activeEffect.wallRoot?.isEnabled = isVisible
+            let rightOffset = SIMD3<Float>(wallMoveOffsetX, 0, 0)
+            let backOffset = SIMD3<Float>(0, 0, -wallMoveOffsetZ)
+            let leftForwardOffset = SIMD3<Float>(-wallMoveOffsetX, 0, wallMoveOffsetZ)
+            var offset = SIMD3<Float>.zero
+            var height = wallBaseHeight
+            if timeInLoop < 1.0 {
+                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
+            } else if timeInLoop < 2.0 {
+                height = wallBaseHeight
+            } else if timeInLoop < 3.0 {
+                let t = segmentProgress(time: timeInLoop, start: 2.0, end: 3.0)
+                offset = lerp(from: .zero, to: rightOffset, t: t)
+            } else if timeInLoop < 4.0 {
+                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 4.0)
+                offset = lerp(from: rightOffset, to: backOffset, t: t)
+            } else if timeInLoop < 5.0 {
+                let t = segmentProgress(time: timeInLoop, start: 4.0, end: 5.0)
+                offset = lerp(from: backOffset, to: leftForwardOffset, t: t)
+            } else {
+                let t = segmentProgress(time: timeInLoop, start: 5.0, end: 6.0)
+                offset = lerp(from: leftForwardOffset, to: .zero, t: t)
+                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+            }
+            updateWall(width: wallBaseWidth, height: height)
+            activeEffect.wallRoot?.position = activeEffect.wallBasePosition + offset
             resetWallRotation()
         case .wallWidthBoth:
-            let phase = 2 * Float.pi * progress
-            let width = wallBaseWidth * (0.6 + 0.6 * (0.5 + 0.5 * sin(phase)))
-            updateWall(width: width, height: wallBaseHeight)
+            let isVisible = timeInLoop < 6.0
+            activeEffect.wallRoot?.isEnabled = isVisible
+            let wideWidth = wallBaseWidth * wallWidthWideScale
+            let narrowWidth = wallBaseWidth * wallWidthNarrowScale
+            var width = wallBaseWidth
+            var height = wallBaseHeight
+            if timeInLoop < 1.0 {
+                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
+            } else if timeInLoop < 3.0 {
+                let t = segmentProgress(time: timeInLoop, start: 1.0, end: 3.0)
+                width = lerp(from: wallBaseWidth, to: wideWidth, t: t)
+            } else if timeInLoop < 5.0 {
+                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 5.0)
+                width = lerp(from: wideWidth, to: narrowWidth, t: t)
+            } else {
+                let t = segmentProgress(time: timeInLoop, start: 5.0, end: 6.0)
+                width = lerp(from: narrowWidth, to: wallBaseWidth, t: t)
+                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+            }
+            updateWall(width: width, height: height)
             resetWallTransform()
         case .wallRotationBoth:
-            let phase = 2 * Float.pi * progress
-            let angle = 0.55 * sin(phase)
-            updateWall(width: wallBaseWidth, height: wallBaseHeight)
+            let isVisible = timeInLoop < 6.0
+            activeEffect.wallRoot?.isEnabled = isVisible
+            var height = wallBaseHeight
+            if timeInLoop < 1.0 {
+                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
+            } else if timeInLoop >= 5.0 {
+                let t = segmentProgress(time: timeInLoop, start: 5.0, end: 6.0)
+                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+            }
+            var angle: Float = 0
+            if timeInLoop >= 2.0 && timeInLoop < 3.0 {
+                let t = segmentProgress(time: timeInLoop, start: 2.0, end: 3.0)
+                angle = lerp(from: 0, to: wallRotationRadians, t: t)
+            } else if timeInLoop >= 3.0 && timeInLoop < 4.0 {
+                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 4.0)
+                angle = lerp(from: wallRotationRadians, to: -wallRotationRadians, t: t)
+            } else if timeInLoop >= 4.0 && timeInLoop < 5.0 {
+                let t = segmentProgress(time: timeInLoop, start: 4.0, end: 5.0)
+                angle = lerp(from: -wallRotationRadians, to: 0, t: t)
+            }
+            updateWall(width: wallBaseWidth, height: height)
             activeEffect.wallRoot?.transform.rotation = simd_quatf(angle: angle, axis: [0, 1, 0])
             activeEffect.wallRoot?.position = activeEffect.wallBasePosition
         case .wallConfirmBoth:
-            let height = wallBaseHeight * min(0.4 + progress, 1.25)
+            let isVisible = timeInLoop < 5.0
+            activeEffect.wallRoot?.isEnabled = isVisible
+            let highHeight = wallBaseHeight * wallHeightHighScale
+            let height: Float
+            if timeInLoop < 0.33 {
+                let t = segmentProgress(time: timeInLoop, start: 0, end: 0.33)
+                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
+            } else if timeInLoop < 1.0 {
+                height = wallBaseHeight
+            } else if timeInLoop < 2.0 {
+                let t = segmentProgress(time: timeInLoop, start: 1.0, end: 2.0)
+                height = lerp(from: wallBaseHeight, to: highHeight, t: t)
+            } else if timeInLoop < 3.66 {
+                height = highHeight
+            } else {
+                let t = segmentProgress(time: timeInLoop, start: 3.66, end: 5.0)
+                height = lerp(from: highHeight, to: wallMinHeight, t: t)
+            }
             updateWall(width: wallBaseWidth, height: height)
-            let palette = progress > 0.7 ? highlightFireWallPalette() : defaultFireWallPalette()
+            let highlight = timeInLoop >= 3.16 && timeInLoop < 5.0
             if let visual = activeEffect.wallVisual {
+                let palette = highlight ? highlightFireWallPalette() : defaultFireWallPalette()
                 applyFireWallPalette(visual, palette: palette)
             }
             resetWallTransform()
         }
-    }
-
-    /// Handles the fireball punch tutorial with gesture-based logic
-    private func updateFireballPunchTutorial(progress: Float, animationTime: TimeInterval) {
-        guard let fireball = activeEffect.rightFireball else { return }
-
-        // If gesture detection is not available, use timeline-based fallback
-        if !gestureDetectionAvailable {
-            let visible = progress < 0.82
-            setVisibility(fireball, isVisible: visible)
-            return
-        }
-
-        let gesture = detectGestureState(for: .right, animationTime: animationTime)
-
-        // Debug logging (sparse)
-        let shouldLog = Int(animationTime * 10) % 10 == 0
-        if shouldLog {
-            print("[PunchTutorial] progress=\(String(format: "%.2f", progress)) palmUp=\(gesture.isPalmUp) palmDown=\(gesture.isPalmDown) fist=\(gesture.isFist) open=\(gesture.isHandOpen)")
-            print("[PunchTutorial] state: summoned=\(punchState.hasBeenSummoned) held=\(punchState.isHeldInPlace) launched=\(punchState.hasLaunched)")
-        }
-
-        // Reset state at the start of each loop
-        if progress < 0.05 {
-            punchState = PunchTutorialState()
-        }
-
-        // State machine for punch tutorial:
-        // 1. Palm up + open hand = summon fireball (track hand)
-        // 2. Palm down/neutral = hold fireball in place (stop tracking)
-        // 3. Fist = keep fireball in place (don't despawn)
-        // 4. End of animation = fireball launches (disappears)
-
-        if !punchState.hasLaunched {
-            if gesture.isPalmUp && gesture.isHandOpen {
-                // Summoning state - show fireball and track hand
-                punchState.hasBeenSummoned = true
-                punchState.isHeldInPlace = false
-                punchState.fixedFireballPosition = nil
-                setVisibility(fireball, isVisible: true)
-            } else if punchState.hasBeenSummoned {
-                if gesture.isFist {
-                    // Fist state - keep fireball visible but don't track
-                    if !punchState.isHeldInPlace {
-                        // Transition to held state - capture current position
-                        punchState.fixedFireballPosition = fireball.position
-                        punchState.isHeldInPlace = true
-                    }
-                    setVisibility(fireball, isVisible: true)
-
-                    // Check if we're near the end of the animation (punch happened)
-                    if progress > 0.75 {
-                        punchState.hasLaunched = true
-                        setVisibility(fireball, isVisible: false)
-                    }
-                } else if !gesture.isPalmUp {
-                    // Palm not up and not fist - hold fireball in place
-                    if !punchState.isHeldInPlace {
-                        punchState.fixedFireballPosition = fireball.position
-                        punchState.isHeldInPlace = true
-                    }
-                    setVisibility(fireball, isVisible: true)
-                } else {
-                    // Still palm up but not open - keep tracking
-                    setVisibility(fireball, isVisible: true)
-                }
-            } else {
-                // Not yet summoned - hide fireball
-                setVisibility(fireball, isVisible: false)
-            }
-        } else {
-            // Already launched - keep hidden
-            setVisibility(fireball, isVisible: false)
-        }
-
-        // If fireball is held in place, override its position
-        if punchState.isHeldInPlace, let fixedPos = punchState.fixedFireballPosition {
-            fireball.position = fixedPos
-        }
-
-        punchState.lastGestureState = gesture
     }
 
     private func updateWall(width: Float, height: Float) {
@@ -755,7 +818,13 @@ final class TutorialPlaybackManager {
 
     private func updateEffectAnchors(animationTime: TimeInterval) {
         for attachment in effectAttachments {
-            applyAnchor(attachment.anchor, to: attachment.effect, offset: attachment.offset, animationTime: animationTime)
+            if attachment.isTracking {
+                applyAnchor(attachment.anchor, to: attachment.effect, offset: attachment.offset, animationTime: animationTime)
+            } else if let frozen = attachment.frozenTransform {
+                attachment.effect.position = frozen.translation
+                attachment.effect.orientation = frozen.rotation
+                attachment.effect.scale = frozen.scale
+            }
         }
     }
 
@@ -787,7 +856,7 @@ final class TutorialPlaybackManager {
             }
         }
 
-        // FALLBACK: Use bone entity transform (static, won't animate)
+        // FALLBACK: Use entity transform (static, won't animate)
         guard let target = anchor.target else {
             if shouldDebug {
                 print("[TutorialPlayback] ✗ No target entity, skipping")
@@ -843,34 +912,45 @@ final class TutorialPlaybackManager {
         from + (to - from) * t
     }
 
-    private func pickSideEntity(from entities: [Entity], sideTokens: [String]) -> Entity? {
-        for entity in entities {
-            let name = hierarchyName(for: entity)
-            if sideTokens.contains(where: { name.contains($0) }) {
-                return entity
-            }
-        }
-        return nil
+    private func lerp(from: SIMD3<Float>, to: SIMD3<Float>, t: Float) -> SIMD3<Float> {
+        from + (to - from) * t
     }
 
-    private func hierarchyName(for entity: Entity) -> String {
-        var components: [String] = []
-        var current: Entity? = entity
-        while let node = current {
-            if !node.name.isEmpty {
-                components.append(node.name.lowercased())
-            }
-            current = node.parent
-        }
-        return components.joined(separator: "/")
+    private func timeInRange(_ time: TimeInterval, start: TimeInterval, end: TimeInterval) -> Bool {
+        time >= start && time < end
     }
 
-    private func bestFallbackEntity(from entities: [Entity]) -> Entity? {
-        let modelEntities = entities.filter { $0 is ModelEntity }
-        if let firstModel = modelEntities.first {
-            return firstModel
+    private func segmentProgress(time: TimeInterval, start: TimeInterval, end: TimeInterval) -> Float {
+        guard end > start else { return 0 }
+        let clamped = min(max(time, start), end)
+        return Float((clamped - start) / (end - start))
+    }
+
+    private func entityCenterX(_ entity: Entity) -> Float {
+        let bounds = entity.visualBounds(relativeTo: tutorialContainer)
+        let center = (bounds.min + bounds.max) * 0.5
+        return center.x
+    }
+
+    private func preferredJointIndex(for state: SkeletalAnimationState) -> Int? {
+        let jointCount = state.jointNames.count
+        guard jointCount > 0 else { return nil }
+
+        var childCounts = Array(repeating: 0, count: jointCount)
+        for parent in state.parentIndices {
+            if let parent, parent < childCounts.count {
+                childCounts[parent] += 1
+            }
         }
-        return entities.first
+
+        var bestIndex = 0
+        var bestCount = childCounts[0]
+        for index in 1..<childCounts.count where childCounts[index] > bestCount {
+            bestIndex = index
+            bestCount = childCounts[index]
+        }
+
+        return bestIndex
     }
 
     private func clamp(_ value: SIMD3<Float>, min minValue: SIMD3<Float>, max maxValue: SIMD3<Float>) -> SIMD3<Float> {
@@ -879,254 +959,6 @@ final class TutorialPlaybackManager {
             max(minValue.y, min(value.y, maxValue.y)),
             max(minValue.z, min(value.z, maxValue.z))
         )
-    }
-
-    private enum HandSide {
-        case left
-        case right
-
-        var nameToken: String {
-            switch self {
-            case .left:
-                return "left"
-            case .right:
-                return "right"
-            }
-        }
-
-        var suffixToken: String {
-            switch self {
-            case .left:
-                return "_l"
-            case .right:
-                return "_r"
-            }
-        }
-    }
-
-    // MARK: - Gesture Detection from Animation
-
-    /// Detected gesture state from skeletal animation
-    private struct AnimatedGestureState {
-        var isPalmUp: Bool = false
-        var isPalmDown: Bool = false
-        var isFist: Bool = false
-        var isHandOpen: Bool = false
-    }
-
-    /// Joint indices needed for gesture detection
-    private struct GestureJointIndices {
-        var wrist: Int?
-        var middleKnuckle: Int?
-        var middleIntermediateBase: Int?
-        var middleTip: Int?
-        var indexKnuckle: Int?
-        var indexTip: Int?
-        var ringTip: Int?
-        var littleTip: Int?
-        var thumbTip: Int?
-    }
-
-    private var rightHandGestureJoints = GestureJointIndices()
-    private var leftHandGestureJoints = GestureJointIndices()
-
-    /// State tracking for punch tutorial
-    private struct PunchTutorialState {
-        var hasBeenSummoned: Bool = false
-        var isHeldInPlace: Bool = false
-        var hasLaunched: Bool = false
-        var fixedFireballPosition: SIMD3<Float>?
-        var lastGestureState: AnimatedGestureState?
-    }
-
-    private var punchState = PunchTutorialState()
-    private var gestureDetectionAvailable = false
-
-    /// Build gesture joint indices from skeletal state joint names
-    private func buildGestureJointIndices(from jointNames: [String], for side: HandSide) -> GestureJointIndices {
-        var indices = GestureJointIndices()
-        let suffix = side.suffixToken
-        let altSuffix = side == .left ? "left" : "right"
-
-        // Helper to check if name matches side
-        func matchesSide(_ lower: String) -> Bool {
-            lower.contains(suffix) || lower.contains(altSuffix)
-        }
-
-        for (index, name) in jointNames.enumerated() {
-            let lower = name.lowercased()
-
-            // Match wrist joint - try multiple patterns
-            if indices.wrist == nil {
-                if lower.contains("wrist") && matchesSide(lower) {
-                    indices.wrist = index
-                } else if lower.contains("hand") && matchesSide(lower) && !lower.contains("finger") {
-                    // "hand_r" or "hand_l" can be used as wrist
-                    indices.wrist = index
-                }
-            }
-
-            // Match middle finger joints
-            if lower.contains("middle") && matchesSide(lower) {
-                if lower.contains("metacarpal") {
-                    // Skip metacarpal, we want knuckle
-                } else if lower.contains("knuckle") || lower.contains("proximal") || lower.contains("1") {
-                    if indices.middleKnuckle == nil {
-                        indices.middleKnuckle = index
-                    }
-                } else if lower.contains("intermediate") || lower.contains("medial") || lower.contains("2") {
-                    if indices.middleIntermediateBase == nil {
-                        indices.middleIntermediateBase = index
-                    }
-                } else if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
-                    if indices.middleTip == nil {
-                        indices.middleTip = index
-                    }
-                }
-            }
-
-            // Match index finger joints
-            if lower.contains("index") && matchesSide(lower) {
-                if lower.contains("knuckle") || lower.contains("proximal") || lower.contains("1") {
-                    if indices.indexKnuckle == nil {
-                        indices.indexKnuckle = index
-                    }
-                } else if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
-                    if indices.indexTip == nil {
-                        indices.indexTip = index
-                    }
-                }
-            }
-
-            // Match ring tip
-            if lower.contains("ring") && matchesSide(lower) {
-                if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
-                    if indices.ringTip == nil {
-                        indices.ringTip = index
-                    }
-                }
-            }
-
-            // Match little/pinky tip
-            if (lower.contains("little") || lower.contains("pinky")) && matchesSide(lower) {
-                if lower.contains("tip") || lower.contains("distal") || lower.contains("4") {
-                    if indices.littleTip == nil {
-                        indices.littleTip = index
-                    }
-                }
-            }
-
-            // Match thumb tip
-            if lower.contains("thumb") && matchesSide(lower) {
-                if lower.contains("tip") || lower.contains("distal") || lower.contains("3") {
-                    if indices.thumbTip == nil {
-                        indices.thumbTip = index
-                    }
-                }
-            }
-        }
-
-        return indices
-    }
-
-    /// Detect gesture state from current animation frame
-    private func detectGestureState(for side: HandSide, animationTime: TimeInterval) -> AnimatedGestureState {
-        var state = AnimatedGestureState()
-
-        let gestureJoints = side == .left ? leftHandGestureJoints : rightHandGestureJoints
-        let anchor = side == .left ? handTargets.left : handTargets.right
-
-        guard let skeletal = anchor.skeletal,
-              let jointTransforms = jointTransforms(for: skeletal.state, animationTime: animationTime) else {
-            return state
-        }
-
-        let modelMatrix = skeletal.state.modelEntity.transformMatrix(relativeTo: tutorialContainer)
-
-        // Helper to get world position of a joint
-        func worldPosition(jointIndex: Int) -> SIMD3<Float>? {
-            guard jointIndex < jointTransforms.count else { return nil }
-            var cache = Array<simd_float4x4?>(repeating: nil, count: jointTransforms.count)
-            let jointMatrix = jointGlobalMatrix(
-                for: jointIndex,
-                transforms: jointTransforms,
-                parentIndices: skeletal.state.parentIndices,
-                cache: &cache
-            )
-            let worldMatrix = simd_mul(modelMatrix, jointMatrix)
-            return SIMD3<Float>(worldMatrix.columns.3.x, worldMatrix.columns.3.y, worldMatrix.columns.3.z)
-        }
-
-        // Helper to get world transform of a joint
-        func worldTransform(jointIndex: Int) -> simd_float4x4? {
-            guard jointIndex < jointTransforms.count else { return nil }
-            var cache = Array<simd_float4x4?>(repeating: nil, count: jointTransforms.count)
-            let jointMatrix = jointGlobalMatrix(
-                for: jointIndex,
-                transforms: jointTransforms,
-                parentIndices: skeletal.state.parentIndices,
-                cache: &cache
-            )
-            return simd_mul(modelMatrix, jointMatrix)
-        }
-
-        // Detect palm orientation using wrist transform
-        if let wristIndex = gestureJoints.wrist,
-           let wristTransform = worldTransform(jointIndex: wristIndex) {
-            // Palm normal is the Y axis of the wrist (adjusted for left/right hand)
-            let yAxisMultiplier: Float = side == .left ? 1.0 : -1.0
-            let palmNormal = SIMD3<Float>(
-                yAxisMultiplier * wristTransform.columns.1.x,
-                yAxisMultiplier * wristTransform.columns.1.y,
-                yAxisMultiplier * wristTransform.columns.1.z
-            )
-            let normalizedPalmNormal = simd_normalize(palmNormal)
-            let worldUp = SIMD3<Float>(0, 1, 0)
-            let dotProduct = simd_dot(normalizedPalmNormal, worldUp)
-
-            state.isPalmUp = dotProduct > 0.4
-            state.isPalmDown = dotProduct < -0.2
-        }
-
-        // Detect fist/open hand using finger positions
-        if let middleKnuckleIndex = gestureJoints.middleKnuckle,
-           let middleTipIndex = gestureJoints.middleTip,
-           let wristIndex = gestureJoints.wrist,
-           let middleKnucklePos = worldPosition(jointIndex: middleKnuckleIndex),
-           let middleTipPos = worldPosition(jointIndex: middleTipIndex),
-           let wristPos = worldPosition(jointIndex: wristIndex) {
-
-            // Check hand compactness (fist detection)
-            let tipToWrist = simd_distance(middleTipPos, wristPos)
-            let knuckleToWrist = simd_distance(middleKnucklePos, wristPos)
-
-            if knuckleToWrist > 0.001 {
-                let compactRatio = tipToWrist / knuckleToWrist
-                state.isFist = compactRatio < 1.4
-                state.isHandOpen = compactRatio > 1.5
-            }
-        }
-
-        // Additional fist check: fingertip clustering
-        if let indexTipPos = gestureJoints.indexTip.flatMap({ worldPosition(jointIndex: $0) }),
-           let middleTipPos = gestureJoints.middleTip.flatMap({ worldPosition(jointIndex: $0) }),
-           let ringTipPos = gestureJoints.ringTip.flatMap({ worldPosition(jointIndex: $0) }),
-           let littleTipPos = gestureJoints.littleTip.flatMap({ worldPosition(jointIndex: $0) }) {
-
-            let d1 = simd_distance(indexTipPos, littleTipPos)
-            let d2 = simd_distance(indexTipPos, ringTipPos)
-            let d3 = simd_distance(middleTipPos, littleTipPos)
-            let maxSpread = max(d1, max(d2, d3))
-
-            if maxSpread < 0.08 {
-                state.isFist = true
-            }
-            if maxSpread > 0.12 {
-                state.isHandOpen = true
-            }
-        }
-
-        return state
     }
 
     private final class SkeletalAnimationState {
@@ -1150,53 +982,6 @@ final class TutorialPlaybackManager {
             self.parentIndices = parentIndices
             self.meshBounds = meshBounds
         }
-    }
-
-    private func resolveSkeletalAnchor(for side: HandSide) -> SkeletalAnchor? {
-        var bestAnchor: SkeletalAnchor?
-        var bestScore = -1
-
-        for state in skeletalStates {
-            guard let (jointIndex, jointScore) = pickJointIndex(for: side, in: state.jointNames) else { continue }
-            let nameScore = hierarchyName(for: state.modelEntity).contains(side.nameToken) ? 2 : 0
-            let totalScore = jointScore + nameScore
-            if totalScore > bestScore {
-                bestScore = totalScore
-                bestAnchor = SkeletalAnchor(state: state, jointIndex: jointIndex)
-            }
-        }
-
-        return bestAnchor
-    }
-
-    private func pickJointIndex(for side: HandSide, in jointNames: [String]) -> (Int, Int)? {
-        var bestIndex: Int?
-        var bestScore = -1
-        let preferredSuffix = "hand\(side.suffixToken)"
-
-        for (index, name) in jointNames.enumerated() {
-            let lower = name.lowercased()
-            var score = 0
-            if lower.hasSuffix(preferredSuffix) || lower.hasSuffix("/" + preferredSuffix) {
-                score += 6
-            }
-            if lower.contains("hand") {
-                score += 2
-            }
-            if lower.contains(side.suffixToken) {
-                score += 2
-            }
-            if lower.contains("wrist") {
-                score += 1
-            }
-            if score > bestScore {
-                bestScore = score
-                bestIndex = index
-            }
-        }
-
-        guard let bestIndex, bestScore >= 3 else { return nil }
-        return (bestIndex, bestScore)
     }
 
     private func collectAnimations(from entity: Entity) -> [AnimationResource] {

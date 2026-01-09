@@ -65,13 +65,21 @@ private struct TutorialsDetailView: View {
         HandTutorial.tutorials(in: category)
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(category.title)
-                .font(.title2)
-                .bold()
+    private var isPlayingSelected: Bool {
+        guard let selectedTutorial else { return false }
+        return appModel.tutorialPlaybackManager.isPlaying &&
+            appModel.tutorialPlaybackManager.currentTutorial == selectedTutorial
+    }
 
-            HStack(alignment: .top, spacing: 16) {
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Left side: Tutorial list
+            VStack(alignment: .leading, spacing: 0) {
+                Text(category.title)
+                    .font(.headline)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
                 List(tutorials, selection: $selectedTutorial) { tutorial in
                     TutorialRow(
                         tutorial: tutorial,
@@ -81,69 +89,176 @@ private struct TutorialsDetailView: View {
                     .tag(tutorial)
                 }
                 .listStyle(.inset)
-                .frame(minWidth: 220, maxWidth: 280)
+            }
+            .frame(width: 260)
+            .background(Color(white: 0.05))
 
-                VStack(alignment: .leading, spacing: 12) {
-                    if let selectedTutorial {
-                        HStack(spacing: 12) {
-                            if appModel.tutorialPlaybackManager.isPlaying &&
-                                appModel.tutorialPlaybackManager.currentTutorial == selectedTutorial {
-                                Button("Stop") {
-                                    appModel.tutorialPlaybackManager.stop()
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.red)
-                            } else {
-                                Button("Play") {
-                                    if !appModel.isTutorialPreviewOpen {
-                                        openWindow(id: "tutorialPreview")
-                                    }
-                                    Task {
-                                        await appModel.tutorialPlaybackManager.play(tutorial: selectedTutorial)
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.orange)
-                            }
+            Divider()
 
-                            Text("Looping")
+            // Right side: Tutorial details panel
+            if let selectedTutorial {
+                TutorialDetailPanel(
+                    tutorial: selectedTutorial,
+                    isPlaying: isPlayingSelected,
+                    isLoading: appModel.tutorialPlaybackManager.isLoading,
+                    error: appModel.tutorialPlaybackManager.lastError,
+                    onPlay: {
+                        if !appModel.isTutorialPreviewOpen {
+                            openWindow(id: "tutorialPreview")
+                        }
+                        Task {
+                            await appModel.tutorialPlaybackManager.play(tutorial: selectedTutorial)
+                        }
+                    },
+                    onStop: {
+                        appModel.tutorialPlaybackManager.stop()
+                    }
+                )
+            } else {
+                VStack {
+                    Spacer()
+                    Image(systemName: "hand.raised")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.tertiary)
+                    Text("Select a Tutorial")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                    Text("Choose a tutorial from the list to see details and preview the animation.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                        .padding(.top, 4)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+}
+
+private struct TutorialDetailPanel: View {
+    let tutorial: HandTutorial
+    let isPlaying: Bool
+    let isLoading: Bool
+    let error: String?
+    let onPlay: () -> Void
+    let onStop: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Header
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(tutorial.title)
+                        .font(.title2)
+                        .fontWeight(.semibold)
+
+                    Text("Duration: \(String(format: "%.1f", tutorial.loopDuration))s loop")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                // Play controls
+                HStack(spacing: 12) {
+                    if isPlaying {
+                        Button(action: onStop) {
+                            Label("Stop", systemImage: "stop.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                    } else {
+                        Button(action: onPlay) {
+                            Label(isLoading ? "Loading..." : "Play", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .disabled(isLoading)
+                    }
+
+                    if isPlaying {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(.green)
+                                .frame(width: 8, height: 8)
+                            Text("Playing")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-
-                        if appModel.tutorialPlaybackManager.isPlaying &&
-                            appModel.tutorialPlaybackManager.currentTutorial == selectedTutorial {
-                            Text(selectedTutorial.description)
-                                .font(.callout)
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(8)
-                        } else {
-                            Text("Preview appears in the Tutorials Preview window.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-
-                    } else {
-                        Text("Select a tutorial to preview the hand animation.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
                     }
+                }
 
-                    if let error = appModel.tutorialPlaybackManager.lastError {
+                Divider()
+
+                // Description
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("How to Perform", systemImage: "hand.point.up.left")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    Text(tutorial.description)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // Error display
+                if let error {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Error", systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.red)
+
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
-
-                    Spacer()
+                    .padding(12)
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(8)
                 }
-            }
 
-            Spacer()
+                Divider()
+
+                // Tips section
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Preview Tips", systemImage: "lightbulb")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        TipRow(icon: "hand.pinch", text: "Pinch to zoom in or out")
+                        TipRow(icon: "hand.draw", text: "Drag to reposition the animation")
+                        TipRow(icon: "arrow.counterclockwise", text: "Animation loops automatically")
+                    }
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
+                .cornerRadius(8)
+
+                Spacer(minLength: 20)
+            }
+            .padding(20)
         }
-        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct TipRow: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .frame(width: 20)
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

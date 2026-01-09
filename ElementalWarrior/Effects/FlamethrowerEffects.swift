@@ -57,6 +57,55 @@ func createCombinedFlamethrowerStream(scale: Float = 1.0) -> Entity {
     return createFlamethrowerStream(scale: scale, muzzleScale: 1.0, jetIntensityMultiplier: 1.5)
 }
 
+/// Creates a flash effect for when flamethrowers combine or split
+@MainActor
+func createFlamethrowerCombineFlash(scale: Float = 1.0) -> Entity {
+    let root = Entity()
+    root.name = "FlamethrowerCombineFlash"
+
+    // Bright orange/yellow flash
+    var flashEmitter = ParticleEmitterComponent()
+    flashEmitter.timing = .once(warmUp: 0, emit: .init(duration: 0.15))
+    flashEmitter.emitterShape = .sphere
+    flashEmitter.emitterShapeSize = [0.08 * scale, 0.08 * scale, 0.08 * scale]
+    flashEmitter.birthLocation = .surface
+    flashEmitter.birthDirection = .normal
+
+    flashEmitter.mainEmitter.birthRate = 2500 * scale
+    flashEmitter.mainEmitter.lifeSpan = 0.3
+    flashEmitter.mainEmitter.lifeSpanVariation = 0.08
+
+    flashEmitter.speed = 2.0 * scale
+    flashEmitter.speedVariation = 0.6 * scale
+    flashEmitter.mainEmitter.acceleration = [0, 0.5 * scale, 0]
+
+    flashEmitter.mainEmitter.size = 0.05 * scale
+    flashEmitter.mainEmitter.sizeVariation = 0.02 * scale
+    flashEmitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 0.1
+
+    flashEmitter.mainEmitter.color = .evolving(
+        start: .single(FlamethrowerColor(red: 1.0, green: 0.85, blue: 0.5, alpha: 1.0)),
+        end: .single(FlamethrowerColor(red: 1.0, green: 0.4, blue: 0.1, alpha: 0.0))
+    )
+    flashEmitter.mainEmitter.blendMode = .additive
+
+    let flashEntity = Entity()
+    flashEntity.components.set(flashEmitter)
+    root.addChild(flashEntity)
+
+    // Bright point light
+    let lightEntity = Entity()
+    let pointLight = PointLightComponent(
+        color: FlamethrowerColor(red: 1.0, green: 0.7, blue: 0.3, alpha: 1.0),
+        intensity: 6000 * scale,
+        attenuationRadius: 2.5 * scale
+    )
+    lightEntity.components.set(pointLight)
+    root.addChild(lightEntity)
+
+    return root
+}
+
 /// Quick dissipating smoke puff for shut down
 @MainActor
 func createFlamethrowerShutdownSmoke(scale: Float = 1.0) -> Entity {

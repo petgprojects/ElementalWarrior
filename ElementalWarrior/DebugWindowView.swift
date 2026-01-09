@@ -24,6 +24,11 @@ struct DebugWindowView: View {
                 Label("Room Scanning", systemImage: "camera.metering.spot")
             }
 
+            TutorialsDebugView()
+                .tabItem {
+                    Label("Tutorials", systemImage: "play.rectangle")
+                }
+
             OptionsDebugView(settings: appModel.gestureSettings)
                 .tabItem {
                     Label("Options", systemImage: "slider.horizontal.3")

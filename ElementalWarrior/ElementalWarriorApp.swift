@@ -33,6 +33,13 @@ struct ElementalWarriorApp: App {
             return WindowPlacement(.utilityPanel)
         }
 
+        WindowGroup(id: "tutorialPreview") {
+            TutorialPreviewWindowView()
+                .environment(appModel)
+        }
+        .windowStyle(.volumetric)
+        .defaultSize(width: 1.5, height: 1.5, depth: 1.5, in: .meters)
+
         ImmersiveSpace(id: "arena") {
             ArenaImmersiveView()
                 .environment(appModel)

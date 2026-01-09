@@ -230,11 +230,17 @@ final class TutorialPlaybackManager {
     private struct HandAnchor {
         var target: Entity?  // Fallback entity (non-skeletal)
         var skeletal: SkeletalAnchor?  // Primary: sampled skeletal animation data
+        var side: HandSide?
     }
 
     private struct SkeletalAnchor {
         let state: SkeletalAnimationState
         let jointIndex: Int
+    }
+
+    private enum HandSide {
+        case left
+        case right
     }
 
     private struct HandTargets {
@@ -260,6 +266,7 @@ final class TutorialPlaybackManager {
         var combinedFlamethrower: Entity?
         var wallVisual: FireWallVisual?
         var wallRoot: Entity?
+        var wallEmberVisual: EmberLineVisual?
         var wallBasePosition: SIMD3<Float> = .zero
         var wallTracksHands: Bool = false
 
@@ -279,6 +286,11 @@ final class TutorialPlaybackManager {
         var flamethrowerCombineFlash: Entity?
         var flamethrowerCombineFlashShown: Bool = false
         var flamethrowerSplitFlashShown: Bool = false
+
+        // Fireball despawn smoke tracking
+        var leftFireballSmokeShown: Bool = false
+        var rightFireballSmokeShown: Bool = false
+        var combinedFireballSmokeShown: Bool = false
     }
 
     private let stageEntity = Entity()
@@ -307,7 +319,7 @@ final class TutorialPlaybackManager {
             updateFireballOffsetAttachments()
         }
     }
-    private let flamethrowerOffset = SIMD3<Float>(0, 0, 0.07)
+    private let flamethrowerOffset = SIMD3<Float>(0, 0, 0.17)
     private let fireballScale: Float = 0.35
     private let combinedFireballScale: Float = 0.52
     private let flamethrowerScale: Float = 0.55
@@ -323,6 +335,12 @@ final class TutorialPlaybackManager {
     private let wallMoveOffsetX: Float = 0.18
     private let wallMoveOffsetZ: Float = 0.15
     private let wallRotationRadians: Float = 0.6
+    private let wallEmberHeight: Float = 0.12
+    private let wallSpawnDelay: TimeInterval = 1.0
+    private let fireballSpawnScale: Float = 0.01
+    private let fireballDespawnScale: Float = 0.001
+    private let fireballSpawnDuration: TimeInterval = 0.5
+    private let fireballDespawnDuration: TimeInterval = 0.25
     private let baseStageScale: Float = 0.12
     private var currentStageScale: Float = 0.12
     private let stageOffset = SIMD3<Float>(0, 0, 0)
@@ -523,7 +541,7 @@ final class TutorialPlaybackManager {
         // Sample at t=1.0s instead of t=0 to get more reliable hand positions
         // (at t=0 hands may be in unusual starting positions)
         let sampleTime: TimeInterval = 1.0
-        var skeletalCandidates: [(anchor: SkeletalAnchor, x: Float)] = []
+        var skeletalCandidates: [(anchor: SkeletalAnchor, x: Float, side: HandSide?)] = []
         for state in skeletalStates {
             guard let jointIndex = preferredJointIndex(for: state) else { continue }
             let anchor = SkeletalAnchor(state: state, jointIndex: jointIndex)
@@ -536,21 +554,45 @@ final class TutorialPlaybackManager {
             } else {
                 xPosition = state.modelEntity.transformMatrix(relativeTo: tutorialContainer).columns.3.x
             }
-            skeletalCandidates.append((anchor: anchor, x: xPosition))
+            skeletalCandidates.append((anchor: anchor, x: xPosition, side: state.sideHint))
         }
 
-        if skeletalCandidates.count == 1 {
-            rightAnchor.skeletal = skeletalCandidates[0].anchor
-            print("[TutorialPlayback] ✓ Assigned single skeletal anchor as RIGHT (joint \(skeletalCandidates[0].anchor.jointIndex))")
-        } else if skeletalCandidates.count >= 2 {
-            let sorted = skeletalCandidates.sorted { $0.x < $1.x }
-            leftAnchor.skeletal = sorted.first?.anchor
-            rightAnchor.skeletal = sorted.last?.anchor
-            if let left = leftAnchor.skeletal {
-                print("[TutorialPlayback] ✓ Assigned LEFT skeletal anchor (joint \(left.jointIndex))")
+        if !skeletalCandidates.isEmpty {
+            let leftHints = skeletalCandidates.filter { $0.side == .left }
+            let rightHints = skeletalCandidates.filter { $0.side == .right }
+
+            var leftCandidate = leftHints.min(by: { $0.x < $1.x })
+            var rightCandidate = rightHints.max(by: { $0.x < $1.x })
+
+            if leftCandidate == nil || rightCandidate == nil {
+                let sorted = skeletalCandidates.sorted { $0.x < $1.x }
+                if leftCandidate == nil {
+                    leftCandidate = sorted.first(where: { candidate in
+                        guard let rightCandidate else { return true }
+                        return ObjectIdentifier(candidate.anchor.state) != ObjectIdentifier(rightCandidate.anchor.state)
+                    })
+                }
+                if rightCandidate == nil {
+                    rightCandidate = sorted.last(where: { candidate in
+                        guard let leftCandidate else { return true }
+                        return ObjectIdentifier(candidate.anchor.state) != ObjectIdentifier(leftCandidate.anchor.state)
+                    })
+                }
             }
-            if let right = rightAnchor.skeletal {
-                print("[TutorialPlayback] ✓ Assigned RIGHT skeletal anchor (joint \(right.jointIndex))")
+
+            if leftCandidate == nil && rightCandidate == nil, let only = skeletalCandidates.first {
+                rightCandidate = only
+            }
+
+            leftAnchor.skeletal = leftCandidate?.anchor
+            rightAnchor.skeletal = rightCandidate?.anchor
+            if leftAnchor.skeletal != nil {
+                leftAnchor.side = .left
+                print("[TutorialPlayback] ✓ Assigned LEFT skeletal anchor (joint \(leftAnchor.skeletal?.jointIndex ?? -1))")
+            }
+            if rightAnchor.skeletal != nil {
+                rightAnchor.side = .right
+                print("[TutorialPlayback] ✓ Assigned RIGHT skeletal anchor (joint \(rightAnchor.skeletal?.jointIndex ?? -1))")
             }
         } else {
             print("[TutorialPlayback] ✗ No skeletal anchors found")
@@ -562,9 +604,11 @@ final class TutorialPlaybackManager {
             let sorted = modelEntities.sorted { entityCenterX($0) < entityCenterX($1) }
             if leftAnchor.skeletal == nil {
                 leftAnchor.target = sorted.first
+                leftAnchor.side = .left
             }
             if rightAnchor.skeletal == nil {
                 rightAnchor.target = sorted.last
+                rightAnchor.side = .right
             }
         }
 
@@ -577,6 +621,21 @@ final class TutorialPlaybackManager {
             result.append(contentsOf: collectEntities(from: child))
         }
         return result
+    }
+
+    private func sideHint(for entity: Entity) -> HandSide? {
+        var current: Entity? = entity
+        while let node = current {
+            let name = node.name.lowercased()
+            if name.contains("left") {
+                return .left
+            }
+            if name.contains("right") {
+                return .right
+            }
+            current = node.parent
+        }
+        return nil
     }
 
     private func centerTutorialEntity(_ entity: Entity) {
@@ -658,6 +717,10 @@ final class TutorialPlaybackManager {
             tutorialContainer.addChild(visual.root)
             effect.wallVisual = visual
             effect.wallRoot = visual.root
+            let emberVisual = createEmberLineEffect(width: wallBaseWidth)
+            emberVisual.root.position = wallBaseOffset
+            tutorialContainer.addChild(emberVisual.root)
+            effect.wallEmberVisual = emberVisual
             effect.wallBasePosition = wallBaseOffset
             effect.wallTracksHands = true  // Enable wall tracking to hand positions
         }
@@ -727,17 +790,35 @@ final class TutorialPlaybackManager {
 
         switch tutorial.kind {
         case .fireballSummonRight:
-            let show = timeInRange(timeInLoop, start: 1.0, end: 3.0)
-            setVisibility(activeEffect.rightFireball, isVisible: show)
+            updateFireballLifecycle(
+                activeEffect.rightFireball,
+                time: timeInLoop,
+                showStart: 1.0,
+                showEnd: 3.0,
+                spawnSmoke: true,
+                smokeShown: &activeEffect.rightFireballSmokeShown
+            )
             setTracking(activeEffect.rightFireball, isTracking: true)
         case .fireballMaintainRight:
-            let show = timeInRange(timeInLoop, start: 1.0, end: 5.0)
-            setVisibility(activeEffect.rightFireball, isVisible: show)
+            updateFireballLifecycle(
+                activeEffect.rightFireball,
+                time: timeInLoop,
+                showStart: 1.0,
+                showEnd: 5.0,
+                spawnSmoke: true,
+                smokeShown: &activeEffect.rightFireballSmokeShown
+            )
             let shouldTrack = timeInLoop < 1.0
             setTracking(activeEffect.rightFireball, isTracking: shouldTrack)
         case .fireballFollowRight:
-            let show = timeInRange(timeInLoop, start: 1.0, end: 5.0)
-            setVisibility(activeEffect.rightFireball, isVisible: show)
+            updateFireballLifecycle(
+                activeEffect.rightFireball,
+                time: timeInLoop,
+                showStart: 1.0,
+                showEnd: 5.0,
+                spawnSmoke: true,
+                smokeShown: &activeEffect.rightFireballSmokeShown
+            )
             setTracking(activeEffect.rightFireball, isTracking: true)
         case .fireballPunchRight:
             // Calculate delta time for projectile updates
@@ -746,15 +827,25 @@ final class TutorialPlaybackManager {
 
             // Fireball visible until punch at 3.66s (unless already launched)
             let punchTime: TimeInterval = 3.66
-            let showHandFireball = timeInRange(timeInLoop, start: 1.0, end: punchTime) && !activeEffect.projectileLaunched
-            setVisibility(activeEffect.rightFireball, isVisible: showHandFireball)
+            if !activeEffect.projectileLaunched {
+                updateFireballLifecycle(
+                    activeEffect.rightFireball,
+                    time: timeInLoop,
+                    showStart: 1.0,
+                    showEnd: punchTime,
+                    despawnAnimation: false,
+                    spawnSmoke: false,
+                    smokeShown: &activeEffect.rightFireballSmokeShown
+                )
+            } else {
+                setVisibility(activeEffect.rightFireball, isVisible: false)
+            }
 
             // Launch at punch time
             if timeInLoop >= punchTime && !activeEffect.projectileLaunched {
                 if let fireball = activeEffect.rightFireball {
                     let launchPosition = fireball.position(relativeTo: tutorialContainer)
-                    // Launch forward and slightly down
-                    let launchDirection = SIMD3<Float>(0, -0.3, -1.0)
+                    let launchDirection = launchDirection(from: handTargets.right, animationTime: animationTime)
                     launchProjectile(from: launchPosition, direction: launchDirection, sourceFireball: fireball)
                 }
             }
@@ -773,15 +864,25 @@ final class TutorialPlaybackManager {
 
             // Fireball visible until cross-punch at 2.33s (unless already launched)
             let punchTime: TimeInterval = 2.33
-            let showHandFireball = timeInRange(timeInLoop, start: 1.0, end: punchTime) && !activeEffect.projectileLaunched
-            setVisibility(activeEffect.rightFireball, isVisible: showHandFireball)
+            if !activeEffect.projectileLaunched {
+                updateFireballLifecycle(
+                    activeEffect.rightFireball,
+                    time: timeInLoop,
+                    showStart: 1.0,
+                    showEnd: punchTime,
+                    despawnAnimation: false,
+                    spawnSmoke: false,
+                    smokeShown: &activeEffect.rightFireballSmokeShown
+                )
+            } else {
+                setVisibility(activeEffect.rightFireball, isVisible: false)
+            }
 
             // Launch at punch time
             if timeInLoop >= punchTime && !activeEffect.projectileLaunched {
                 if let fireball = activeEffect.rightFireball {
                     let launchPosition = fireball.position(relativeTo: tutorialContainer)
-                    // Launch forward and slightly down
-                    let launchDirection = SIMD3<Float>(0, -0.3, -1.0)
+                    let launchDirection = launchDirection(from: handTargets.left, fallback: handTargets.right, animationTime: animationTime)
                     launchProjectile(from: launchPosition, direction: launchDirection, sourceFireball: fireball)
                 }
             }
@@ -794,11 +895,30 @@ final class TutorialPlaybackManager {
             setTracking(activeEffect.rightFireball, isTracking: true)
         case .fireballCombineBoth:
             let combineTime: TimeInterval = 1.33
-            let separate = timeInRange(timeInLoop, start: 1.0, end: combineTime)
-            let combined = timeInRange(timeInLoop, start: combineTime, end: 5.33)
-            setVisibility(activeEffect.leftFireball, isVisible: separate)
-            setVisibility(activeEffect.rightFireball, isVisible: separate)
-            setVisibility(activeEffect.combinedFireball, isVisible: combined)
+            updateFireballLifecycle(
+                activeEffect.leftFireball,
+                time: timeInLoop,
+                showStart: 1.0,
+                showEnd: combineTime,
+                spawnSmoke: false,
+                smokeShown: &activeEffect.leftFireballSmokeShown
+            )
+            updateFireballLifecycle(
+                activeEffect.rightFireball,
+                time: timeInLoop,
+                showStart: 1.0,
+                showEnd: combineTime,
+                spawnSmoke: false,
+                smokeShown: &activeEffect.rightFireballSmokeShown
+            )
+            updateFireballLifecycle(
+                activeEffect.combinedFireball,
+                time: timeInLoop,
+                showStart: combineTime,
+                showEnd: 5.33,
+                spawnSmoke: false,
+                smokeShown: &activeEffect.combinedFireballSmokeShown
+            )
             setTracking(activeEffect.leftFireball, isTracking: true)
             setTracking(activeEffect.rightFireball, isTracking: true)
             setTracking(activeEffect.combinedFireball, isTracking: true)
@@ -860,142 +980,166 @@ final class TutorialPlaybackManager {
                 }
             }
         case .wallSummonBoth:
-            let isVisible = timeInLoop < 4.0
-            activeEffect.wallRoot?.isEnabled = isVisible
+            guard let wallTime = wallAnimationTime(timeInLoop: timeInLoop, duration: duration) else {
+                setWallVisible(false)
+                break
+            }
+            let isVisible = wallTime < 4.0
+            setWallVisible(isVisible)
             let height: Float
-            if timeInLoop < 1.0 {
-                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
-                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
-            } else if timeInLoop < 2.66 {
-                height = wallBaseHeight
+            if wallTime < 1.0 {
+                let t = segmentProgress(time: wallTime, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallEmberHeight, t: t)
+            } else if wallTime < 2.66 {
+                height = wallEmberHeight
             } else {
-                let t = segmentProgress(time: timeInLoop, start: 2.66, end: 4.0)
-                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+                let t = segmentProgress(time: wallTime, start: 2.66, end: 4.0)
+                height = lerp(from: wallEmberHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
             applyWallTransformFromHands(animationTime: animationTime)
         case .wallHeightBoth:
-            let isVisible = timeInLoop < 5.0
-            activeEffect.wallRoot?.isEnabled = isVisible
+            guard let wallTime = wallAnimationTime(timeInLoop: timeInLoop, duration: duration) else {
+                setWallVisible(false)
+                break
+            }
+            let isVisible = wallTime < 5.0
+            setWallVisible(isVisible)
             let highHeight = wallBaseHeight * wallHeightHighScale
             let lowHeight = wallBaseHeight * wallHeightLowScale
             let height: Float
-            if timeInLoop < 1.0 {
-                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
+            if wallTime < 1.0 {
+                let t = segmentProgress(time: wallTime, start: 0, end: 1.0)
                 height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
-            } else if timeInLoop < 2.0 {
+            } else if wallTime < 2.0 {
                 height = wallBaseHeight
-            } else if timeInLoop < 3.0 {
-                let t = segmentProgress(time: timeInLoop, start: 2.0, end: 3.0)
+            } else if wallTime < 3.0 {
+                let t = segmentProgress(time: wallTime, start: 2.0, end: 3.0)
                 height = lerp(from: wallBaseHeight, to: highHeight, t: t)
-            } else if timeInLoop < 4.0 {
-                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 4.0)
+            } else if wallTime < 4.0 {
+                let t = segmentProgress(time: wallTime, start: 3.0, end: 4.0)
                 height = lerp(from: highHeight, to: lowHeight, t: t)
             } else {
-                let t = segmentProgress(time: timeInLoop, start: 4.0, end: 5.0)
+                let t = segmentProgress(time: wallTime, start: 4.0, end: 5.0)
                 height = lerp(from: lowHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
             applyWallTransformFromHands(animationTime: animationTime)
         case .wallLocationBoth:
-            let isVisible = timeInLoop < 6.0
-            activeEffect.wallRoot?.isEnabled = isVisible
+            guard let wallTime = wallAnimationTime(timeInLoop: timeInLoop, duration: duration) else {
+                setWallVisible(false)
+                break
+            }
+            let isVisible = wallTime < 6.0
+            setWallVisible(isVisible)
             let rightOffset = SIMD3<Float>(wallMoveOffsetX, 0, 0)
             let backOffset = SIMD3<Float>(0, 0, -wallMoveOffsetZ)
             let leftForwardOffset = SIMD3<Float>(-wallMoveOffsetX, 0, wallMoveOffsetZ)
             var offset = SIMD3<Float>.zero
-            var height = wallBaseHeight
-            if timeInLoop < 1.0 {
-                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
-                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
-            } else if timeInLoop < 2.0 {
-                height = wallBaseHeight
-            } else if timeInLoop < 3.0 {
-                let t = segmentProgress(time: timeInLoop, start: 2.0, end: 3.0)
+            var height = wallEmberHeight
+            if wallTime < 1.0 {
+                let t = segmentProgress(time: wallTime, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallEmberHeight, t: t)
+            } else if wallTime < 2.0 {
+                height = wallEmberHeight
+            } else if wallTime < 3.0 {
+                let t = segmentProgress(time: wallTime, start: 2.0, end: 3.0)
                 offset = lerp(from: .zero, to: rightOffset, t: t)
-            } else if timeInLoop < 4.0 {
-                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 4.0)
+            } else if wallTime < 4.0 {
+                let t = segmentProgress(time: wallTime, start: 3.0, end: 4.0)
                 offset = lerp(from: rightOffset, to: backOffset, t: t)
-            } else if timeInLoop < 5.0 {
-                let t = segmentProgress(time: timeInLoop, start: 4.0, end: 5.0)
+            } else if wallTime < 5.0 {
+                let t = segmentProgress(time: wallTime, start: 4.0, end: 5.0)
                 offset = lerp(from: backOffset, to: leftForwardOffset, t: t)
             } else {
-                let t = segmentProgress(time: timeInLoop, start: 5.0, end: 6.0)
+                let t = segmentProgress(time: wallTime, start: 5.0, end: 6.0)
                 offset = lerp(from: leftForwardOffset, to: .zero, t: t)
-                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+                height = lerp(from: wallEmberHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
             applyWallTransformFromHands(animationTime: animationTime, positionOffset: offset)
         case .wallWidthBoth:
-            let isVisible = timeInLoop < 6.0
-            activeEffect.wallRoot?.isEnabled = isVisible
+            guard let wallTime = wallAnimationTime(timeInLoop: timeInLoop, duration: duration) else {
+                setWallVisible(false)
+                break
+            }
+            let isVisible = wallTime < 6.0
+            setWallVisible(isVisible)
             let wideWidth = wallBaseWidth * wallWidthWideScale
             let narrowWidth = wallBaseWidth * wallWidthNarrowScale
             var width = wallBaseWidth
-            var height = wallBaseHeight
-            if timeInLoop < 1.0 {
-                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
-                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
-            } else if timeInLoop < 3.0 {
-                let t = segmentProgress(time: timeInLoop, start: 1.0, end: 3.0)
+            var height = wallEmberHeight
+            if wallTime < 1.0 {
+                let t = segmentProgress(time: wallTime, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallEmberHeight, t: t)
+            } else if wallTime < 3.0 {
+                let t = segmentProgress(time: wallTime, start: 1.0, end: 3.0)
                 width = lerp(from: wallBaseWidth, to: wideWidth, t: t)
-            } else if timeInLoop < 5.0 {
-                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 5.0)
+            } else if wallTime < 5.0 {
+                let t = segmentProgress(time: wallTime, start: 3.0, end: 5.0)
                 width = lerp(from: wideWidth, to: narrowWidth, t: t)
             } else {
-                let t = segmentProgress(time: timeInLoop, start: 5.0, end: 6.0)
+                let t = segmentProgress(time: wallTime, start: 5.0, end: 6.0)
                 width = lerp(from: narrowWidth, to: wallBaseWidth, t: t)
-                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+                height = lerp(from: wallEmberHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: width, height: height)
             applyWallTransformFromHands(animationTime: animationTime)
         case .wallRotationBoth:
-            let isVisible = timeInLoop < 6.0
-            activeEffect.wallRoot?.isEnabled = isVisible
-            var height = wallBaseHeight
-            if timeInLoop < 1.0 {
-                let t = segmentProgress(time: timeInLoop, start: 0, end: 1.0)
-                height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
-            } else if timeInLoop >= 5.0 {
-                let t = segmentProgress(time: timeInLoop, start: 5.0, end: 6.0)
-                height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
+            guard let wallTime = wallAnimationTime(timeInLoop: timeInLoop, duration: duration) else {
+                setWallVisible(false)
+                break
+            }
+            let isVisible = wallTime < 6.0
+            setWallVisible(isVisible)
+            var height = wallEmberHeight
+            if wallTime < 1.0 {
+                let t = segmentProgress(time: wallTime, start: 0, end: 1.0)
+                height = lerp(from: wallMinHeight, to: wallEmberHeight, t: t)
+            } else if wallTime >= 5.0 {
+                let t = segmentProgress(time: wallTime, start: 5.0, end: 6.0)
+                height = lerp(from: wallEmberHeight, to: wallMinHeight, t: t)
             }
             var rotationOffset: Float = 0
-            if timeInLoop >= 2.0 && timeInLoop < 3.0 {
-                let t = segmentProgress(time: timeInLoop, start: 2.0, end: 3.0)
+            if wallTime >= 2.0 && wallTime < 3.0 {
+                let t = segmentProgress(time: wallTime, start: 2.0, end: 3.0)
                 rotationOffset = lerp(from: 0, to: wallRotationRadians, t: t)
-            } else if timeInLoop >= 3.0 && timeInLoop < 4.0 {
-                let t = segmentProgress(time: timeInLoop, start: 3.0, end: 4.0)
+            } else if wallTime >= 3.0 && wallTime < 4.0 {
+                let t = segmentProgress(time: wallTime, start: 3.0, end: 4.0)
                 rotationOffset = lerp(from: wallRotationRadians, to: -wallRotationRadians, t: t)
-            } else if timeInLoop >= 4.0 && timeInLoop < 5.0 {
-                let t = segmentProgress(time: timeInLoop, start: 4.0, end: 5.0)
+            } else if wallTime >= 4.0 && wallTime < 5.0 {
+                let t = segmentProgress(time: wallTime, start: 4.0, end: 5.0)
                 rotationOffset = lerp(from: -wallRotationRadians, to: 0, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
             applyWallTransformFromHands(animationTime: animationTime, rotationOffset: rotationOffset)
         case .wallConfirmBoth:
-            let isVisible = timeInLoop < 5.0
-            activeEffect.wallRoot?.isEnabled = isVisible
+            guard let wallTime = wallAnimationTime(timeInLoop: timeInLoop, duration: duration) else {
+                setWallVisible(false)
+                break
+            }
+            let isVisible = wallTime < 5.0
+            setWallVisible(isVisible)
             let highHeight = wallBaseHeight * wallHeightHighScale
             let height: Float
-            if timeInLoop < 0.33 {
-                let t = segmentProgress(time: timeInLoop, start: 0, end: 0.33)
+            if wallTime < 0.33 {
+                let t = segmentProgress(time: wallTime, start: 0, end: 0.33)
                 height = lerp(from: wallMinHeight, to: wallBaseHeight, t: t)
-            } else if timeInLoop < 1.0 {
+            } else if wallTime < 1.0 {
                 height = wallBaseHeight
-            } else if timeInLoop < 2.0 {
-                let t = segmentProgress(time: timeInLoop, start: 1.0, end: 2.0)
+            } else if wallTime < 2.0 {
+                let t = segmentProgress(time: wallTime, start: 1.0, end: 2.0)
                 height = lerp(from: wallBaseHeight, to: highHeight, t: t)
-            } else if timeInLoop < 3.66 {
+            } else if wallTime < 3.66 {
                 height = highHeight
             } else {
-                let t = segmentProgress(time: timeInLoop, start: 3.66, end: 5.0)
+                let t = segmentProgress(time: wallTime, start: 3.66, end: 5.0)
                 height = lerp(from: highHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
             // Wall starts blue (unconfirmed), turns red/orange after confirm at 3.33s
-            let confirmed = timeInLoop >= 3.33 && timeInLoop < 5.0
-            if let visual = activeEffect.wallVisual {
+            let confirmed = wallTime >= 3.33 && wallTime < 5.0
+            if let visual = activeEffect.wallVisual, height > wallEmberHeight {
                 let palette = confirmed ? defaultFireWallPalette() : highlightFireWallPalette()
                 applyFireWallPalette(visual, palette: palette)
             }
@@ -1004,18 +1148,49 @@ final class TutorialPlaybackManager {
     }
 
     private func updateWall(width: Float, height: Float) {
-        if let visual = activeEffect.wallVisual {
-            updateFireWallEffect(visual, width: width, height: height)
+        updateWallVisuals(width: width, height: height)
+    }
+
+    private func updateWallVisuals(width: Float, height: Float) {
+        let showEmbers = height <= wallEmberHeight
+
+        if showEmbers {
+            if let ember = activeEffect.wallEmberVisual {
+                ember.root.isEnabled = true
+                updateEmberLineEffect(ember, width: width)
+            }
+            activeEffect.wallRoot?.isEnabled = false
+        } else {
+            if let visual = activeEffect.wallVisual {
+                visual.root.isEnabled = true
+                updateFireWallEffect(visual, width: width, height: height)
+            }
+            activeEffect.wallEmberVisual?.root.isEnabled = false
         }
+    }
+
+    private func setWallVisible(_ isVisible: Bool) {
+        activeEffect.wallRoot?.isEnabled = isVisible
+        activeEffect.wallEmberVisual?.root.isEnabled = isVisible
+    }
+
+    private func wallAnimationTime(timeInLoop: TimeInterval, duration: TimeInterval) -> TimeInterval? {
+        guard timeInLoop >= wallSpawnDelay else { return nil }
+        let available = max(duration - wallSpawnDelay, 0.001)
+        let wallTime = timeInLoop - wallSpawnDelay
+        let scaledTime = min(wallTime * (duration / available), duration)
+        return scaledTime
     }
 
     private func resetWallTransform() {
         activeEffect.wallRoot?.position = activeEffect.wallBasePosition
+        activeEffect.wallEmberVisual?.root.position = activeEffect.wallBasePosition
         resetWallRotation()
     }
 
     private func resetWallRotation() {
         activeEffect.wallRoot?.transform.rotation = simd_quatf(angle: 0, axis: [0, 1, 0])
+        activeEffect.wallEmberVisual?.root.transform.rotation = simd_quatf(angle: 0, axis: [0, 1, 0])
     }
 
     /// Calculates wall position and rotation from hand positions
@@ -1064,6 +1239,10 @@ final class TutorialPlaybackManager {
 
         wallRoot.position = basePosition + positionOffset
         wallRoot.transform.rotation = simd_quatf(angle: baseAngle + rotationOffset, axis: [0, 1, 0])
+        if let emberRoot = activeEffect.wallEmberVisual?.root {
+            emberRoot.position = basePosition + positionOffset
+            emberRoot.transform.rotation = simd_quatf(angle: baseAngle + rotationOffset, axis: [0, 1, 0])
+        }
     }
 
     private func updateEffectAnchors(animationTime: TimeInterval) {
@@ -1083,7 +1262,10 @@ final class TutorialPlaybackManager {
     /// Rotation correction for flamethrower effects to align jet (+Z) with palm forward direction
     /// The flamethrower shoots along +Z, but the hand's orientation has +Z pointing sideways
     /// Apply a -90 degree rotation around Y to correct this
-    private let flamethrowerRotationCorrection = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0])
+    private func flamethrowerRotationCorrection(for side: HandSide?) -> simd_quatf {
+        let angle: Float = side == .left ? .pi / 2 : -.pi / 2
+        return simd_quatf(angle: angle, axis: [0, 1, 0])
+    }
 
     private func applyAnchor(_ anchor: HandAnchor, to effect: Entity, offset: SIMD3<Float>, animationTime: TimeInterval, isFlamethrower: Bool = false) {
         applyAnchorDebugCounter += 1
@@ -1098,14 +1280,17 @@ final class TutorialPlaybackManager {
         // PRIMARY: Use skeletal animation sampling - this is the ONLY way to track skinned mesh animations
         if let skeletal = anchor.skeletal {
             if let jointTransform = currentJointTransform(for: skeletal, animationTime: animationTime) {
-                let rotatedOffset = jointTransform.rotation.act(offset)
-                effect.position = jointTransform.translation + rotatedOffset
-
-                // Apply rotation correction for flamethrowers to align jet with palm forward
+                let baseRotation = jointTransform.rotation
                 if isFlamethrower {
-                    effect.orientation = jointTransform.rotation * flamethrowerRotationCorrection
+                    let correction = flamethrowerRotationCorrection(for: anchor.side)
+                    let correctedRotation = baseRotation * correction
+                    let rotatedOffset = correctedRotation.act(offset)
+                    effect.position = jointTransform.translation + rotatedOffset
+                    effect.orientation = correctedRotation
                 } else {
-                    effect.orientation = jointTransform.rotation
+                    let rotatedOffset = baseRotation.act(offset)
+                    effect.position = jointTransform.translation + rotatedOffset
+                    effect.orientation = baseRotation
                 }
 
                 if shouldDebug {
@@ -1126,14 +1311,17 @@ final class TutorialPlaybackManager {
         }
         let worldTransform = target.transformMatrix(relativeTo: tutorialContainer)
         let transform = Transform(matrix: worldTransform)
-        let rotatedOffset = transform.rotation.act(offset)
-        effect.position = transform.translation + rotatedOffset
-
-        // Apply rotation correction for flamethrowers
+        let baseRotation = transform.rotation
         if isFlamethrower {
-            effect.orientation = transform.rotation * flamethrowerRotationCorrection
+            let correction = flamethrowerRotationCorrection(for: anchor.side)
+            let correctedRotation = baseRotation * correction
+            let rotatedOffset = correctedRotation.act(offset)
+            effect.position = transform.translation + rotatedOffset
+            effect.orientation = correctedRotation
         } else {
-            effect.orientation = transform.rotation
+            let rotatedOffset = baseRotation.act(offset)
+            effect.position = transform.translation + rotatedOffset
+            effect.orientation = baseRotation
         }
 
         if shouldDebug {
@@ -1180,6 +1368,7 @@ final class TutorialPlaybackManager {
             activeEffect.rightFlamethrower,
             activeEffect.combinedFlamethrower,
             activeEffect.wallRoot,
+            activeEffect.wallEmberVisual?.root,
             activeEffect.launchedProjectile,
             activeEffect.projectileTrail,
             activeEffect.explosion,
@@ -1295,6 +1484,89 @@ final class TutorialPlaybackManager {
         activeEffect.projectileLaunched = false
     }
 
+    private func updateFireballLifecycle(
+        _ entity: Entity?,
+        time: TimeInterval,
+        showStart: TimeInterval,
+        showEnd: TimeInterval,
+        spawnAnimation: Bool = true,
+        despawnAnimation: Bool = true,
+        spawnSmoke: Bool,
+        smokeShown: inout Bool
+    ) {
+        guard let entity, showStart < showEnd else { return }
+
+        if time < showStart || time >= showEnd {
+            setVisibility(entity, isVisible: false)
+            entity.scale = SIMD3<Float>(repeating: fireballSpawnScale)
+            return
+        }
+
+        setVisibility(entity, isVisible: true)
+
+        let spawnEnd = spawnAnimation ? min(showStart + fireballSpawnDuration, showEnd) : showStart
+        let despawnStart = despawnAnimation ? max(showEnd - fireballDespawnDuration, showStart) : showEnd
+
+        var scale: Float = 1.0
+        if spawnAnimation, time < spawnEnd {
+            let t = segmentProgress(time: time, start: showStart, end: spawnEnd)
+            scale = lerp(from: fireballSpawnScale, to: 1.0, t: t)
+        } else if despawnAnimation, time >= despawnStart {
+            let t = segmentProgress(time: time, start: despawnStart, end: showEnd)
+            scale = lerp(from: 1.0, to: fireballDespawnScale, t: t)
+            if spawnSmoke, !smokeShown {
+                spawnSmokePuff(at: entity.position(relativeTo: tutorialContainer))
+                smokeShown = true
+            }
+        }
+
+        entity.scale = SIMD3<Float>(repeating: scale)
+    }
+
+    private func spawnSmokePuff(at position: SIMD3<Float>) {
+        let smokePuff = createSmokePuff()
+        smokePuff.position = position
+        smokePuff.scale = [fireballSpawnScale, fireballSpawnScale, fireballSpawnScale]
+        tutorialContainer.addChild(smokePuff)
+
+        var smokeTransform = smokePuff.transform
+        smokeTransform.scale = [1.0, 1.0, 1.0]
+        smokePuff.move(to: smokeTransform, relativeTo: smokePuff.parent, duration: 0.25, timingFunction: .linear)
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            if var emitter = smokePuff.components[ParticleEmitterComponent.self] {
+                emitter.mainEmitter.birthRate = 0
+                smokePuff.components.set(emitter)
+            }
+            try? await Task.sleep(for: .milliseconds(2500))
+            smokePuff.removeFromParent()
+        }
+    }
+
+    private func launchDirection(from primary: HandAnchor, fallback: HandAnchor? = nil, animationTime: TimeInterval) -> SIMD3<Float> {
+        if let direction = sampledVelocityDirection(for: primary, animationTime: animationTime) {
+            return direction
+        }
+        if let fallback, let direction = sampledVelocityDirection(for: fallback, animationTime: animationTime) {
+            return direction
+        }
+        return SIMD3<Float>(0, 0, -1)
+    }
+
+    private func sampledVelocityDirection(for anchor: HandAnchor, animationTime: TimeInterval) -> SIMD3<Float>? {
+        guard let skeletal = anchor.skeletal else { return nil }
+        let sampleOffset = min(0.08, animationTime)
+        guard let current = currentJointTransform(for: skeletal, animationTime: animationTime),
+              let previous = currentJointTransform(for: skeletal, animationTime: max(0, animationTime - sampleOffset)) else {
+            return nil
+        }
+        let delta = current.translation - previous.translation
+        let length = simd_length(delta)
+        guard length > 0.001 else { return nil }
+        return simd_normalize(delta)
+    }
+
     private func setVisibility(_ entity: Entity?, isVisible: Bool) {
         guard let entity else { return }
         entity.isEnabled = true
@@ -1332,6 +1604,11 @@ final class TutorialPlaybackManager {
         activeEffect.flamethrowerCombineFlashShown = false
         activeEffect.flamethrowerSplitFlashShown = false
         activeEffect.flamethrowerCombineFlash?.isEnabled = false
+        // Reset fireball smoke flags and timing
+        activeEffect.leftFireballSmokeShown = false
+        activeEffect.rightFireballSmokeShown = false
+        activeEffect.combinedFireballSmokeShown = false
+        lastUpdateTime = 0
     }
 
     private func lerp(from: Float, to: Float, t: Float) -> Float {
@@ -1361,6 +1638,16 @@ final class TutorialPlaybackManager {
     private func preferredJointIndex(for state: SkeletalAnimationState) -> Int? {
         let jointCount = state.jointNames.count
         guard jointCount > 0 else { return nil }
+
+        let lowerNames = state.jointNames.map { $0.lowercased() }
+        for (index, name) in lowerNames.enumerated() {
+            if name.hasSuffix("/hand_r") || name == "hand_r" {
+                return index
+            }
+        }
+        for (index, name) in lowerNames.enumerated() where name.contains("hand_r_001") {
+            return index
+        }
 
         var childCounts = Array(repeating: 0, count: jointCount)
         for parent in state.parentIndices {
@@ -1394,19 +1681,22 @@ final class TutorialPlaybackManager {
         let jointNameToIndex: [String: Int]
         let parentIndices: [Int?]
         let meshBounds: BoundingBox?
+        let sideHint: HandSide?
 
         init(modelEntity: ModelEntity,
              sampledAnimation: SampledAnimation<JointTransforms>,
              jointNames: [String],
              jointNameToIndex: [String: Int],
              parentIndices: [Int?],
-             meshBounds: BoundingBox?) {
+             meshBounds: BoundingBox?,
+             sideHint: HandSide?) {
             self.modelEntity = modelEntity
             self.sampledAnimation = sampledAnimation
             self.jointNames = jointNames
             self.jointNameToIndex = jointNameToIndex
             self.parentIndices = parentIndices
             self.meshBounds = meshBounds
+            self.sideHint = sideHint
         }
     }
 
@@ -1483,6 +1773,7 @@ final class TutorialPlaybackManager {
                 let nameToIndex = Dictionary(uniqueKeysWithValues: jointNames.enumerated().map { ($1, $0) })
                 let parentIndices = buildParentIndices(for: skeleton, jointNames: jointNames, sampledIndex: nameToIndex)
                 let bounds = modelEntity.visualBounds(relativeTo: modelEntity)
+                let hint = sideHint(for: modelEntity)
 
                 let state = SkeletalAnimationState(
                     modelEntity: modelEntity,
@@ -1490,7 +1781,8 @@ final class TutorialPlaybackManager {
                     jointNames: jointNames,
                     jointNameToIndex: nameToIndex,
                     parentIndices: parentIndices,
-                    meshBounds: bounds
+                    meshBounds: bounds,
+                    sideHint: hint
                 )
                 states.append(state)
                 print("[TutorialPlayback] ✓ Created skeletal state for \(modelEntity.name)")

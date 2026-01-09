@@ -174,6 +174,130 @@ func createFireTrail() -> Entity {
     return trailEntity
 }
 
+// MARK: - Combine Flash Effect
+
+/// Creates a bright flash effect for when fireballs combine
+@MainActor
+func createCombineFlashEffect(scale: Float = 1.0) -> Entity {
+    let root = Entity()
+    root.name = "CombineFlash"
+
+    // Bright white/yellow flash
+    var flashEmitter = ParticleEmitterComponent()
+    flashEmitter.timing = .once(warmUp: 0, emit: .init(duration: 0.1))
+    flashEmitter.emitterShape = .sphere
+    flashEmitter.emitterShapeSize = [0.05 * scale, 0.05 * scale, 0.05 * scale]
+    flashEmitter.birthLocation = .surface
+    flashEmitter.birthDirection = .normal
+
+    flashEmitter.mainEmitter.birthRate = 3000 * scale
+    flashEmitter.mainEmitter.lifeSpan = 0.25
+    flashEmitter.mainEmitter.lifeSpanVariation = 0.05
+
+    flashEmitter.speed = 1.5 * scale
+    flashEmitter.speedVariation = 0.5 * scale
+    flashEmitter.mainEmitter.acceleration = [0, 0, 0]
+
+    flashEmitter.mainEmitter.size = 0.06 * scale
+    flashEmitter.mainEmitter.sizeVariation = 0.02 * scale
+    flashEmitter.mainEmitter.sizeMultiplierAtEndOfLifespan = 0.1
+
+    flashEmitter.mainEmitter.color = .evolving(
+        start: .single(.init(red: 1.0, green: 0.95, blue: 0.8, alpha: 1.0)),
+        end: .single(.init(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.0))
+    )
+    flashEmitter.mainEmitter.blendMode = .additive
+
+    let flashEntity = Entity()
+    flashEntity.components.set(flashEmitter)
+    root.addChild(flashEntity)
+
+    // Bright point light
+    let lightEntity = Entity()
+    let pointLight = PointLightComponent(
+        color: .init(red: 1.0, green: 0.9, blue: 0.6, alpha: 1.0),
+        intensity: 8000 * scale,
+        attenuationRadius: 3.0 * scale
+    )
+    lightEntity.components.set(pointLight)
+    root.addChild(lightEntity)
+
+    return root
+}
+
+// MARK: - Mega Fireball Effect
+
+/// Creates an enhanced mega fireball for combined fireballs with pulsing glow
+@MainActor
+func createMegaFireball(scale: Float = 1.0) -> Entity {
+    let rootEntity = Entity()
+    rootEntity.name = "MegaFireball"
+
+    // Enhanced white core - larger and brighter
+    let whiteCore = createFlameEmitter(
+        color: .white,
+        birthRate: 1500,
+        size: 0.035 * scale,
+        speed: 0.03 * scale,
+        acceleration: [0, 0.0, 0],
+        lifeSpan: 0.35,
+        spreadingAngle: 0.0,
+        noiseStrength: 0.0 * scale,
+        scale: scale
+    )
+    rootEntity.addChild(whiteCore)
+
+    // Enhanced inner flame (yellow/orange)
+    let innerFlame = createFlameEmitter(
+        color: .yellow,
+        birthRate: 900,
+        size: 0.08 * scale,
+        speed: 0.15 * scale,
+        acceleration: [0, 0.3 * scale, 0],
+        lifeSpan: 0.7,
+        spreadingAngle: 0.25,
+        noiseStrength: 0.03 * scale,
+        scale: scale
+    )
+    rootEntity.addChild(innerFlame)
+
+    // Enhanced rising spikes (orange/red)
+    let spikes = createFlameEmitter(
+        color: PlatformColor(red: 1.0, green: 0.4, blue: 0.0, alpha: 1.0),
+        birthRate: 600,
+        size: 0.07 * scale,
+        speed: 0.7 * scale,
+        acceleration: [0, 1.5 * scale, 0],
+        lifeSpan: 0.6,
+        spreadingAngle: 0.15,
+        noiseStrength: 0.2 * scale,
+        scale: scale
+    )
+    rootEntity.addChild(spikes)
+
+    // Enhanced outer flame (deep red)
+    let outerFlame = createFlameEmitter(
+        color: PlatformColor(red: 0.8, green: 0.1, blue: 0.0, alpha: 1.0),
+        birthRate: 350,
+        size: 0.15 * scale,
+        speed: 0.4 * scale,
+        acceleration: [0, 0.5 * scale, 0],
+        lifeSpan: 1.0,
+        spreadingAngle: 0.45,
+        noiseStrength: 0.1 * scale,
+        scale: scale
+    )
+    rootEntity.addChild(outerFlame)
+
+    // Enhanced point light - brighter for mega fireball
+    let lightEntity = Entity()
+    let pointLight = PointLightComponent(color: .orange, intensity: 3500, attenuationRadius: 5.0 * scale)
+    lightEntity.components.set(pointLight)
+    rootEntity.addChild(lightEntity)
+
+    return rootEntity
+}
+
 // MARK: - Smoke Puff Effect
 
 /// Creates a smoke puff effect for when fireballs extinguish

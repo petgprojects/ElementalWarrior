@@ -187,6 +187,7 @@ struct HandTutorial: Identifiable, Hashable {
     var category: TutorialCategory { kind.category }
     var title: String { kind.title }
     var description: String { kind.description }
+    var loopDuration: TimeInterval { kind.loopDuration }
     var resourceSubdirectory: String { "hand_animations/usdz/\(kind.category.resourceFolder)" }
 
     func resourceURL(in bundle: Bundle = .main) -> URL? {
@@ -220,6 +221,11 @@ final class TutorialPlaybackManager {
     var isPlaying: Bool = false
     var lastError: String?
     var previewSize: SIMD3<Float> = [0.4, 0.4, 0.4]
+    var isLoading: Bool = false
+
+    // User transform for pinch/drag gestures
+    var userScale: Float = 1.0
+    var userOffset: SIMD3<Float> = .zero
 
     private struct HandAnchor {
         var target: Entity?  // Fallback entity (non-skeletal)
@@ -242,6 +248,7 @@ final class TutorialPlaybackManager {
         var offset: SIMD3<Float>
         var isTracking: Bool = true
         var frozenTransform: Transform?
+        var isFlamethrower: Bool = false  // Flamethrowers need special rotation to align with palm
     }
 
     private struct ActiveEffect {
@@ -254,6 +261,24 @@ final class TutorialPlaybackManager {
         var wallVisual: FireWallVisual?
         var wallRoot: Entity?
         var wallBasePosition: SIMD3<Float> = .zero
+        var wallTracksHands: Bool = false
+
+        // Projectile launch state
+        var launchedProjectile: Entity?
+        var projectileTrail: Entity?
+        var projectileVelocity: SIMD3<Float> = .zero
+        var projectileLaunched: Bool = false
+        var explosion: Entity?
+        var scorchMark: Entity?
+
+        // Combine effects
+        var combineFlash: Entity?
+        var combineFlashShown: Bool = false
+
+        // Flamethrower combine effects
+        var flamethrowerCombineFlash: Entity?
+        var flamethrowerCombineFlashShown: Bool = false
+        var flamethrowerSplitFlashShown: Bool = false
     }
 
     private let stageEntity = Entity()
@@ -270,8 +295,13 @@ final class TutorialPlaybackManager {
     private var skeletalStates: [SkeletalAnimationState] = []
     private var lastLoopTime: TimeInterval = 0
     private var activeLoopDuration: TimeInterval = 0
+    private var lastUpdateTime: TimeInterval = 0
 
     private let defaultFireballOffset = SIMD3<Float>(-0.3, 0.12, 0.18)
+    // Left hand offset mirrors the X component for proper positioning above left palm
+    private var leftFireballOffset: SIMD3<Float> {
+        SIMD3<Float>(abs(fireballOffset.x), fireballOffset.y, fireballOffset.z)
+    }
     var fireballOffset: SIMD3<Float> {
         didSet {
             updateFireballOffsetAttachments()
@@ -282,9 +312,9 @@ final class TutorialPlaybackManager {
     private let combinedFireballScale: Float = 0.52
     private let flamethrowerScale: Float = 0.55
     private let combinedFlamethrowerScale: Float = 0.7
-    private let wallBaseWidth: Float = 0.7
+    private let wallBaseWidth: Float = 1.4  // Doubled from 0.7 for wider initial wall
     private let wallBaseHeight: Float = 0.7
-    private let wallBaseOffset = SIMD3<Float>(0, -0.08, -0.2)
+    private let wallBaseOffset = SIMD3<Float>(0, 0, -0.5)  // In front of hands at floor level
     private let wallMinHeight: Float = 0.06
     private let wallWidthWideScale: Float = 1.5
     private let wallWidthNarrowScale: Float = 0.6
@@ -322,12 +352,22 @@ final class TutorialPlaybackManager {
 
         currentTutorial = tutorial
         lastError = nil
+        isLoading = true  // Show loading indicator
+
+        defer {
+            isLoading = false  // Hide loading indicator when done
+        }
 
         guard let url = tutorial.resourceURL() else {
             lastError = "Missing tutorial asset: \(tutorial.id)"
             isPlaying = false
             return
         }
+
+        // Debug: Print the URL being loaded
+        print("[TutorialPlayback] Loading tutorial: \(tutorial.id)")
+        print("[TutorialPlayback] URL: \(url)")
+        print("[TutorialPlayback] Expected file: \(tutorial.id).usdz")
 
         do {
             let entity = try await Entity(contentsOf: url)
@@ -480,12 +520,18 @@ final class TutorialPlaybackManager {
 
         // PRIMARY: Resolve skeletal anchors without relying on joint names.
         // Pick a stable joint per skeletal state and assign sides by X position.
+        // Sample at t=1.0s instead of t=0 to get more reliable hand positions
+        // (at t=0 hands may be in unusual starting positions)
+        let sampleTime: TimeInterval = 1.0
         var skeletalCandidates: [(anchor: SkeletalAnchor, x: Float)] = []
         for state in skeletalStates {
             guard let jointIndex = preferredJointIndex(for: state) else { continue }
             let anchor = SkeletalAnchor(state: state, jointIndex: jointIndex)
             let xPosition: Float
-            if let transform = currentJointTransform(for: anchor, animationTime: 0) {
+            if let transform = currentJointTransform(for: anchor, animationTime: sampleTime) {
+                xPosition = transform.translation.x
+            } else if let transform = currentJointTransform(for: anchor, animationTime: 0) {
+                // Fallback to t=0 if t=1.0 fails
                 xPosition = transform.translation.x
             } else {
                 xPosition = state.modelEntity.transformMatrix(relativeTo: tutorialContainer).columns.3.x
@@ -557,20 +603,28 @@ final class TutorialPlaybackManager {
         case .fireballCombineBoth:
             let leftFireball = createRealisticFireball(scale: fireballScale)
             let rightFireball = createRealisticFireball(scale: fireballScale)
-            let combined = createRealisticFireball(scale: combinedFireballScale)
-            effect.leftFireball = attachEffect(leftFireball, offset: fireballOffset, anchor: handTargets.left)
+            // Use enhanced mega fireball for combined effect
+            let combined = createMegaFireball(scale: combinedFireballScale)
+            // Use mirrored offset for left hand so fireball appears above palm correctly
+            effect.leftFireball = attachEffect(leftFireball, offset: leftFireballOffset, anchor: handTargets.left)
             effect.rightFireball = attachEffect(rightFireball, offset: fireballOffset, anchor: handTargets.right)
             effect.combinedFireball = attachEffect(combined, offset: fireballOffset, anchor: handTargets.right)
-            registerAttachment(effect.leftFireball, anchor: handTargets.left, offset: fireballOffset)
+            registerAttachment(effect.leftFireball, anchor: handTargets.left, offset: leftFireballOffset)
             registerAttachment(effect.rightFireball, anchor: handTargets.right, offset: fireballOffset)
             registerAttachment(effect.combinedFireball, anchor: handTargets.right, offset: fireballOffset)
             setVisibility(effect.leftFireball, isVisible: false)
             setVisibility(effect.rightFireball, isVisible: false)
             setVisibility(effect.combinedFireball, isVisible: false)
+
+            // Pre-create combine flash (will be positioned and shown at combine time)
+            let flash = createCombineFlashEffect(scale: 0.8)
+            flash.isEnabled = false
+            tutorialContainer.addChild(flash)
+            effect.combineFlash = flash
         case .flamethrowerSummonRight:
             let stream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
             effect.rightFlamethrower = attachEffect(stream, offset: flamethrowerOffset, anchor: handTargets.right)
-            registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
+            registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset, isFlamethrower: true)
             setVisibility(effect.rightFlamethrower, isVisible: false)
         case .flamethrowerCombineBoth:
             let leftStream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
@@ -579,25 +633,33 @@ final class TutorialPlaybackManager {
             effect.leftFlamethrower = attachEffect(leftStream, offset: flamethrowerOffset, anchor: handTargets.left)
             effect.rightFlamethrower = attachEffect(rightStream, offset: flamethrowerOffset, anchor: handTargets.right)
             effect.combinedFlamethrower = attachEffect(combinedStream, offset: flamethrowerOffset, anchor: handTargets.right)
-            registerAttachment(effect.leftFlamethrower, anchor: handTargets.left, offset: flamethrowerOffset)
-            registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
-            registerAttachment(effect.combinedFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
+            registerAttachment(effect.leftFlamethrower, anchor: handTargets.left, offset: flamethrowerOffset, isFlamethrower: true)
+            registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset, isFlamethrower: true)
+            registerAttachment(effect.combinedFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset, isFlamethrower: true)
             setVisibility(effect.leftFlamethrower, isVisible: false)
             setVisibility(effect.rightFlamethrower, isVisible: false)
             setVisibility(effect.combinedFlamethrower, isVisible: false)
+
+            // Pre-create flamethrower combine flash
+            let flash = createFlamethrowerCombineFlash(scale: 0.7)
+            flash.isEnabled = false
+            tutorialContainer.addChild(flash)
+            effect.flamethrowerCombineFlash = flash
         case .wallSummonBoth,
              .wallHeightBoth,
              .wallLocationBoth,
              .wallWidthBoth,
              .wallRotationBoth,
              .wallConfirmBoth:
-            let visual = createFireWallEffect(width: wallBaseWidth, height: wallBaseHeight)
-            applyFireWallPalette(visual, palette: defaultFireWallPalette())
+            // Start with ember line height (wallMinHeight) and blue palette
+            let visual = createFireWallEffect(width: wallBaseWidth, height: wallMinHeight)
+            applyFireWallPalette(visual, palette: highlightFireWallPalette())  // Blue (unconfirmed)
             visual.root.position = wallBaseOffset
             tutorialContainer.addChild(visual.root)
             effect.wallVisual = visual
             effect.wallRoot = visual.root
             effect.wallBasePosition = wallBaseOffset
+            effect.wallTracksHands = true  // Enable wall tracking to hand positions
         }
 
         return effect
@@ -610,9 +672,9 @@ final class TutorialPlaybackManager {
         return effect
     }
 
-    private func registerAttachment(_ effect: Entity?, anchor: HandAnchor, offset: SIMD3<Float>) {
+    private func registerAttachment(_ effect: Entity?, anchor: HandAnchor, offset: SIMD3<Float>, isFlamethrower: Bool = false) {
         guard let effect else { return }
-        effectAttachments.append(EffectAttachment(effect: effect, anchor: anchor, offset: offset))
+        effectAttachments.append(EffectAttachment(effect: effect, anchor: anchor, offset: offset, isFlamethrower: isFlamethrower))
     }
 
     private func setTracking(_ effect: Entity?, isTracking: Bool) {
@@ -678,33 +740,125 @@ final class TutorialPlaybackManager {
             setVisibility(activeEffect.rightFireball, isVisible: show)
             setTracking(activeEffect.rightFireball, isTracking: true)
         case .fireballPunchRight:
-            let show = timeInRange(timeInLoop, start: 1.0, end: 3.66)
-            setVisibility(activeEffect.rightFireball, isVisible: show)
-            let shouldTrack = timeInLoop < 1.0 || timeInLoop >= 3.66
+            // Calculate delta time for projectile updates
+            let deltaTime = Float(animationTime - lastUpdateTime)
+            lastUpdateTime = animationTime
+
+            // Fireball visible until punch at 3.66s (unless already launched)
+            let punchTime: TimeInterval = 3.66
+            let showHandFireball = timeInRange(timeInLoop, start: 1.0, end: punchTime) && !activeEffect.projectileLaunched
+            setVisibility(activeEffect.rightFireball, isVisible: showHandFireball)
+
+            // Launch at punch time
+            if timeInLoop >= punchTime && !activeEffect.projectileLaunched {
+                if let fireball = activeEffect.rightFireball {
+                    let launchPosition = fireball.position(relativeTo: tutorialContainer)
+                    // Launch forward and slightly down
+                    let launchDirection = SIMD3<Float>(0, -0.3, -1.0)
+                    launchProjectile(from: launchPosition, direction: launchDirection, sourceFireball: fireball)
+                }
+            }
+
+            // Update projectile if launched
+            if activeEffect.projectileLaunched {
+                _ = updateProjectile(deltaTime: max(0.001, deltaTime))
+            }
+
+            let shouldTrack = timeInLoop < 1.0 || timeInLoop >= punchTime
             setTracking(activeEffect.rightFireball, isTracking: shouldTrack)
         case .fireballCrossPunchBoth:
-            let show = timeInRange(timeInLoop, start: 1.0, end: 2.33)
-            setVisibility(activeEffect.rightFireball, isVisible: show)
+            // Calculate delta time for projectile updates
+            let deltaTime = Float(animationTime - lastUpdateTime)
+            lastUpdateTime = animationTime
+
+            // Fireball visible until cross-punch at 2.33s (unless already launched)
+            let punchTime: TimeInterval = 2.33
+            let showHandFireball = timeInRange(timeInLoop, start: 1.0, end: punchTime) && !activeEffect.projectileLaunched
+            setVisibility(activeEffect.rightFireball, isVisible: showHandFireball)
+
+            // Launch at punch time
+            if timeInLoop >= punchTime && !activeEffect.projectileLaunched {
+                if let fireball = activeEffect.rightFireball {
+                    let launchPosition = fireball.position(relativeTo: tutorialContainer)
+                    // Launch forward and slightly down
+                    let launchDirection = SIMD3<Float>(0, -0.3, -1.0)
+                    launchProjectile(from: launchPosition, direction: launchDirection, sourceFireball: fireball)
+                }
+            }
+
+            // Update projectile if launched
+            if activeEffect.projectileLaunched {
+                _ = updateProjectile(deltaTime: max(0.001, deltaTime))
+            }
+
             setTracking(activeEffect.rightFireball, isTracking: true)
         case .fireballCombineBoth:
-            let separate = timeInRange(timeInLoop, start: 1.0, end: 1.33)
-            let combined = timeInRange(timeInLoop, start: 1.33, end: 5.33)
+            let combineTime: TimeInterval = 1.33
+            let separate = timeInRange(timeInLoop, start: 1.0, end: combineTime)
+            let combined = timeInRange(timeInLoop, start: combineTime, end: 5.33)
             setVisibility(activeEffect.leftFireball, isVisible: separate)
             setVisibility(activeEffect.rightFireball, isVisible: separate)
             setVisibility(activeEffect.combinedFireball, isVisible: combined)
             setTracking(activeEffect.leftFireball, isTracking: true)
             setTracking(activeEffect.rightFireball, isTracking: true)
             setTracking(activeEffect.combinedFireball, isTracking: true)
+
+            // Show combine flash at the moment of combination
+            if timeInLoop >= combineTime && !activeEffect.combineFlashShown {
+                if let flash = activeEffect.combineFlash,
+                   let rightFireball = activeEffect.rightFireball {
+                    // Position flash at the combined fireball location (right hand)
+                    flash.position = rightFireball.position(relativeTo: tutorialContainer)
+                    flash.isEnabled = true
+                    activeEffect.combineFlashShown = true
+
+                    // Auto-disable flash after effect completes
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.5))
+                        flash.isEnabled = false
+                    }
+                }
+            }
         case .flamethrowerSummonRight:
             let show = timeInRange(timeInLoop, start: 1.0, end: 4.0)
             setVisibility(activeEffect.rightFlamethrower, isVisible: show)
         case .flamethrowerCombineBoth:
-            let separate = timeInRange(timeInLoop, start: 1.0, end: 3.0)
-                || timeInRange(timeInLoop, start: 5.0, end: 7.0)
-            let combined = timeInRange(timeInLoop, start: 3.0, end: 5.0)
+            let combineTime: TimeInterval = 3.0
+            let splitTime: TimeInterval = 5.0
+            let separate = timeInRange(timeInLoop, start: 1.0, end: combineTime)
+                || timeInRange(timeInLoop, start: splitTime, end: 7.0)
+            let combined = timeInRange(timeInLoop, start: combineTime, end: splitTime)
             setVisibility(activeEffect.leftFlamethrower, isVisible: separate)
             setVisibility(activeEffect.rightFlamethrower, isVisible: separate)
             setVisibility(activeEffect.combinedFlamethrower, isVisible: combined)
+
+            // Show combine flash at t=3.0
+            if timeInLoop >= combineTime && !activeEffect.flamethrowerCombineFlashShown {
+                if let flash = activeEffect.flamethrowerCombineFlash,
+                   let rightFlamethrower = activeEffect.rightFlamethrower {
+                    flash.position = rightFlamethrower.position(relativeTo: tutorialContainer)
+                    flash.isEnabled = true
+                    activeEffect.flamethrowerCombineFlashShown = true
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.5))
+                        flash.isEnabled = false
+                    }
+                }
+            }
+
+            // Show split flash at t=5.0
+            if timeInLoop >= splitTime && !activeEffect.flamethrowerSplitFlashShown {
+                if let flash = activeEffect.flamethrowerCombineFlash,
+                   let rightFlamethrower = activeEffect.rightFlamethrower {
+                    flash.position = rightFlamethrower.position(relativeTo: tutorialContainer)
+                    flash.isEnabled = true
+                    activeEffect.flamethrowerSplitFlashShown = true
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.5))
+                        flash.isEnabled = false
+                    }
+                }
+            }
         case .wallSummonBoth:
             let isVisible = timeInLoop < 4.0
             activeEffect.wallRoot?.isEnabled = isVisible
@@ -719,7 +873,7 @@ final class TutorialPlaybackManager {
                 height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
-            resetWallTransform()
+            applyWallTransformFromHands(animationTime: animationTime)
         case .wallHeightBoth:
             let isVisible = timeInLoop < 5.0
             activeEffect.wallRoot?.isEnabled = isVisible
@@ -742,7 +896,7 @@ final class TutorialPlaybackManager {
                 height = lerp(from: lowHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
-            resetWallTransform()
+            applyWallTransformFromHands(animationTime: animationTime)
         case .wallLocationBoth:
             let isVisible = timeInLoop < 6.0
             activeEffect.wallRoot?.isEnabled = isVisible
@@ -771,8 +925,7 @@ final class TutorialPlaybackManager {
                 height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
-            activeEffect.wallRoot?.position = activeEffect.wallBasePosition + offset
-            resetWallRotation()
+            applyWallTransformFromHands(animationTime: animationTime, positionOffset: offset)
         case .wallWidthBoth:
             let isVisible = timeInLoop < 6.0
             activeEffect.wallRoot?.isEnabled = isVisible
@@ -795,7 +948,7 @@ final class TutorialPlaybackManager {
                 height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: width, height: height)
-            resetWallTransform()
+            applyWallTransformFromHands(animationTime: animationTime)
         case .wallRotationBoth:
             let isVisible = timeInLoop < 6.0
             activeEffect.wallRoot?.isEnabled = isVisible
@@ -807,20 +960,19 @@ final class TutorialPlaybackManager {
                 let t = segmentProgress(time: timeInLoop, start: 5.0, end: 6.0)
                 height = lerp(from: wallBaseHeight, to: wallMinHeight, t: t)
             }
-            var angle: Float = 0
+            var rotationOffset: Float = 0
             if timeInLoop >= 2.0 && timeInLoop < 3.0 {
                 let t = segmentProgress(time: timeInLoop, start: 2.0, end: 3.0)
-                angle = lerp(from: 0, to: wallRotationRadians, t: t)
+                rotationOffset = lerp(from: 0, to: wallRotationRadians, t: t)
             } else if timeInLoop >= 3.0 && timeInLoop < 4.0 {
                 let t = segmentProgress(time: timeInLoop, start: 3.0, end: 4.0)
-                angle = lerp(from: wallRotationRadians, to: -wallRotationRadians, t: t)
+                rotationOffset = lerp(from: wallRotationRadians, to: -wallRotationRadians, t: t)
             } else if timeInLoop >= 4.0 && timeInLoop < 5.0 {
                 let t = segmentProgress(time: timeInLoop, start: 4.0, end: 5.0)
-                angle = lerp(from: -wallRotationRadians, to: 0, t: t)
+                rotationOffset = lerp(from: -wallRotationRadians, to: 0, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
-            activeEffect.wallRoot?.transform.rotation = simd_quatf(angle: angle, axis: [0, 1, 0])
-            activeEffect.wallRoot?.position = activeEffect.wallBasePosition
+            applyWallTransformFromHands(animationTime: animationTime, rotationOffset: rotationOffset)
         case .wallConfirmBoth:
             let isVisible = timeInLoop < 5.0
             activeEffect.wallRoot?.isEnabled = isVisible
@@ -841,12 +993,13 @@ final class TutorialPlaybackManager {
                 height = lerp(from: highHeight, to: wallMinHeight, t: t)
             }
             updateWall(width: wallBaseWidth, height: height)
-            let highlight = timeInLoop >= 3.16 && timeInLoop < 5.0
+            // Wall starts blue (unconfirmed), turns red/orange after confirm at 3.33s
+            let confirmed = timeInLoop >= 3.33 && timeInLoop < 5.0
             if let visual = activeEffect.wallVisual {
-                let palette = highlight ? highlightFireWallPalette() : defaultFireWallPalette()
+                let palette = confirmed ? defaultFireWallPalette() : highlightFireWallPalette()
                 applyFireWallPalette(visual, palette: palette)
             }
-            resetWallTransform()
+            applyWallTransformFromHands(animationTime: animationTime)
         }
     }
 
@@ -865,10 +1018,58 @@ final class TutorialPlaybackManager {
         activeEffect.wallRoot?.transform.rotation = simd_quatf(angle: 0, axis: [0, 1, 0])
     }
 
+    /// Calculates wall position and rotation from hand positions
+    /// Returns (position, rotationAngle) or nil if hands aren't tracked
+    private func calculateWallTransformFromHands(animationTime: TimeInterval) -> (position: SIMD3<Float>, angle: Float)? {
+        // Get current hand positions from skeletal animation
+        var leftPos: SIMD3<Float>?
+        var rightPos: SIMD3<Float>?
+
+        if let leftSkeletal = handTargets.left.skeletal,
+           let transform = currentJointTransform(for: leftSkeletal, animationTime: animationTime) {
+            leftPos = transform.translation
+        }
+
+        if let rightSkeletal = handTargets.right.skeletal,
+           let transform = currentJointTransform(for: rightSkeletal, animationTime: animationTime) {
+            rightPos = transform.translation
+        }
+
+        // Need both hands for wall positioning
+        guard let left = leftPos, let right = rightPos else { return nil }
+
+        // Calculate midpoint between hands
+        let midpoint = (left + right) * 0.5
+
+        // Wall position: at floor level (Y=0), in front of hands (Z offset from midpoint)
+        let wallZOffset: Float = -0.3  // Wall spawns in front of hands
+        let wallPosition = SIMD3<Float>(midpoint.x, 0, midpoint.z + wallZOffset)
+
+        // Wall orientation: parallel to the line between hands
+        let handDirection = right - left
+        let angle = atan2(handDirection.z, handDirection.x)
+
+        return (wallPosition, angle)
+    }
+
+    /// Applies wall transform from hands with optional position and rotation offsets
+    private func applyWallTransformFromHands(animationTime: TimeInterval,
+                                             positionOffset: SIMD3<Float> = .zero,
+                                             rotationOffset: Float = 0) {
+        guard activeEffect.wallTracksHands,
+              let wallRoot = activeEffect.wallRoot,
+              let (basePosition, baseAngle) = calculateWallTransformFromHands(animationTime: animationTime) else {
+            return
+        }
+
+        wallRoot.position = basePosition + positionOffset
+        wallRoot.transform.rotation = simd_quatf(angle: baseAngle + rotationOffset, axis: [0, 1, 0])
+    }
+
     private func updateEffectAnchors(animationTime: TimeInterval) {
         for attachment in effectAttachments {
             if attachment.isTracking {
-                applyAnchor(attachment.anchor, to: attachment.effect, offset: attachment.offset, animationTime: animationTime)
+                applyAnchor(attachment.anchor, to: attachment.effect, offset: attachment.offset, animationTime: animationTime, isFlamethrower: attachment.isFlamethrower)
             } else if let frozen = attachment.frozenTransform {
                 attachment.effect.position = frozen.translation
                 attachment.effect.orientation = frozen.rotation
@@ -879,14 +1080,19 @@ final class TutorialPlaybackManager {
 
     private var applyAnchorDebugCounter = 0
 
-    private func applyAnchor(_ anchor: HandAnchor, to effect: Entity, offset: SIMD3<Float>, animationTime: TimeInterval) {
+    /// Rotation correction for flamethrower effects to align jet (+Z) with palm forward direction
+    /// The flamethrower shoots along +Z, but the hand's orientation has +Z pointing sideways
+    /// Apply a -90 degree rotation around Y to correct this
+    private let flamethrowerRotationCorrection = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0])
+
+    private func applyAnchor(_ anchor: HandAnchor, to effect: Entity, offset: SIMD3<Float>, animationTime: TimeInterval, isFlamethrower: Bool = false) {
         applyAnchorDebugCounter += 1
 
         // Debug every 30 calls (~1 second at 30fps)
         let shouldDebug = applyAnchorDebugCounter % 30 == 1
 
         if shouldDebug {
-            print("[TutorialPlayback] applyAnchor called: hasSkeletal=\(anchor.skeletal != nil), animTime=\(animationTime)")
+            print("[TutorialPlayback] applyAnchor called: hasSkeletal=\(anchor.skeletal != nil), animTime=\(animationTime), isFlamethrower=\(isFlamethrower)")
         }
 
         // PRIMARY: Use skeletal animation sampling - this is the ONLY way to track skinned mesh animations
@@ -894,7 +1100,13 @@ final class TutorialPlaybackManager {
             if let jointTransform = currentJointTransform(for: skeletal, animationTime: animationTime) {
                 let rotatedOffset = jointTransform.rotation.act(offset)
                 effect.position = jointTransform.translation + rotatedOffset
-                effect.orientation = jointTransform.rotation
+
+                // Apply rotation correction for flamethrowers to align jet with palm forward
+                if isFlamethrower {
+                    effect.orientation = jointTransform.rotation * flamethrowerRotationCorrection
+                } else {
+                    effect.orientation = jointTransform.rotation
+                }
 
                 if shouldDebug {
                     print("[TutorialPlayback] ✓ Applied skeletal transform: pos=\(effect.position)")
@@ -916,7 +1128,13 @@ final class TutorialPlaybackManager {
         let transform = Transform(matrix: worldTransform)
         let rotatedOffset = transform.rotation.act(offset)
         effect.position = transform.translation + rotatedOffset
-        effect.orientation = transform.rotation
+
+        // Apply rotation correction for flamethrowers
+        if isFlamethrower {
+            effect.orientation = transform.rotation * flamethrowerRotationCorrection
+        } else {
+            effect.orientation = transform.rotation
+        }
 
         if shouldDebug {
             print("[TutorialPlayback] Used fallback entity transform: pos=\(effect.position)")
@@ -961,12 +1179,120 @@ final class TutorialPlaybackManager {
             activeEffect.leftFlamethrower,
             activeEffect.rightFlamethrower,
             activeEffect.combinedFlamethrower,
-            activeEffect.wallRoot
+            activeEffect.wallRoot,
+            activeEffect.launchedProjectile,
+            activeEffect.projectileTrail,
+            activeEffect.explosion,
+            activeEffect.scorchMark,
+            activeEffect.combineFlash,
+            activeEffect.flamethrowerCombineFlash
         ]
 
         for effect in effectEntities.compactMap({ $0 }) {
             effect.removeFromParent()
         }
+    }
+
+    // MARK: - Projectile Launch System
+
+    private let projectileSpeed: Float = 3.0  // Slower for tutorial visibility
+    private let projectileGravity: Float = 1.5
+    private let floorY: Float = -0.5  // Floor level in tutorial space
+
+    /// Launches a fireball projectile from the given position in the given direction
+    private func launchProjectile(from position: SIMD3<Float>, direction: SIMD3<Float>, sourceFireball: Entity?) {
+        // Don't re-launch if already launched
+        guard !activeEffect.projectileLaunched else { return }
+
+        // Create a new fireball for the projectile (clone from source or create new)
+        let projectile = createRealisticFireball(scale: fireballScale)
+        projectile.position = position
+        tutorialContainer.addChild(projectile)
+
+        // Add fire trail
+        let trail = createFireTrail()
+        projectile.addChild(trail)
+
+        // Set velocity (direction * speed)
+        let normalizedDirection = simd_normalize(direction)
+        activeEffect.projectileVelocity = normalizedDirection * projectileSpeed
+
+        activeEffect.launchedProjectile = projectile
+        activeEffect.projectileTrail = trail
+        activeEffect.projectileLaunched = true
+
+        print("[TutorialPlayback] Launched projectile from \(position) in direction \(normalizedDirection)")
+    }
+
+    /// Updates the projectile position based on velocity and gravity
+    /// Returns true if projectile is still flying, false if it hit something
+    private func updateProjectile(deltaTime: Float) -> Bool {
+        guard activeEffect.projectileLaunched,
+              let projectile = activeEffect.launchedProjectile else {
+            return false
+        }
+
+        // Apply gravity to velocity
+        activeEffect.projectileVelocity.y -= projectileGravity * deltaTime
+
+        // Update position
+        projectile.position += activeEffect.projectileVelocity * deltaTime
+
+        // Check for floor collision
+        if projectile.position.y <= floorY {
+            // Hit the floor - create explosion
+            let impactPosition = SIMD3<Float>(projectile.position.x, floorY, projectile.position.z)
+            createImpactEffects(at: impactPosition)
+
+            // Remove projectile
+            projectile.removeFromParent()
+            activeEffect.launchedProjectile = nil
+            activeEffect.projectileTrail = nil
+
+            return false
+        }
+
+        return true
+    }
+
+    /// Creates explosion and scorch mark at the impact position
+    private func createImpactEffects(at position: SIMD3<Float>) {
+        // Create explosion
+        let explosion = createExplosionEffect(scale: 0.5)  // Smaller for tutorial
+        explosion.position = position
+        tutorialContainer.addChild(explosion)
+        activeEffect.explosion = explosion
+
+        // Create scorch mark on the floor
+        let scorch = createScorchMark(scale: 0.5)  // Smaller for tutorial
+        scorch.position = position
+        // Rotate scorch mark to lie flat on the floor (XZ plane)
+        scorch.orientation = simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
+        tutorialContainer.addChild(scorch)
+        activeEffect.scorchMark = scorch
+
+        print("[TutorialPlayback] Created impact effects at \(position)")
+
+        // Schedule cleanup of explosion after a delay
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.0))
+            explosion.removeFromParent()
+        }
+    }
+
+    /// Resets projectile state for loop restart
+    private func resetProjectileState() {
+        activeEffect.launchedProjectile?.removeFromParent()
+        activeEffect.projectileTrail?.removeFromParent()
+        activeEffect.explosion?.removeFromParent()
+        activeEffect.scorchMark?.removeFromParent()
+
+        activeEffect.launchedProjectile = nil
+        activeEffect.projectileTrail = nil
+        activeEffect.explosion = nil
+        activeEffect.scorchMark = nil
+        activeEffect.projectileVelocity = .zero
+        activeEffect.projectileLaunched = false
     }
 
     private func setVisibility(_ entity: Entity?, isVisible: Bool) {
@@ -997,6 +1323,15 @@ final class TutorialPlaybackManager {
             effectAttachments[index].isTracking = true
             effectAttachments[index].frozenTransform = nil
         }
+        // Reset projectile state when loop restarts
+        resetProjectileState()
+        // Reset combine flash state
+        activeEffect.combineFlashShown = false
+        activeEffect.combineFlash?.isEnabled = false
+        // Reset flamethrower combine flash state
+        activeEffect.flamethrowerCombineFlashShown = false
+        activeEffect.flamethrowerSplitFlashShown = false
+        activeEffect.flamethrowerCombineFlash?.isEnabled = false
     }
 
     private func lerp(from: Float, to: Float, t: Float) -> Float {
@@ -1332,5 +1667,33 @@ final class TutorialPlaybackManager {
         }
 
         return hasSamples ? (minPoint, maxPoint) : nil
+    }
+
+    // MARK: - User Transform (Pinch/Drag)
+
+    /// Applies user scale and offset to the tutorial container
+    func applyUserTransform() {
+        let clampedScale = max(0.3, min(3.0, userScale))
+        tutorialContainer.scale = SIMD3<Float>(repeating: clampedScale)
+        tutorialContainer.position = userOffset
+    }
+
+    /// Resets user transform to defaults
+    func resetUserTransform() {
+        userScale = 1.0
+        userOffset = .zero
+        applyUserTransform()
+    }
+
+    /// Updates user scale (from pinch gesture)
+    func setUserScale(_ scale: Float) {
+        userScale = max(0.3, min(3.0, scale))
+        applyUserTransform()
+    }
+
+    /// Updates user offset (from drag gesture)
+    func setUserOffset(_ offset: SIMD3<Float>) {
+        userOffset = offset
+        applyUserTransform()
     }
 }

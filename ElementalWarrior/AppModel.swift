@@ -24,4 +24,5 @@ class AppModel {
 
     let gestureSettings = GestureSettings()
     let tutorialPlaybackManager = TutorialPlaybackManager()
+    var isTutorialPreviewOpen = false
 }

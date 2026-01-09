@@ -95,7 +95,9 @@ private struct TutorialsDetailView: View {
                                 .tint(.red)
                             } else {
                                 Button("Play") {
-                                    openWindow(id: "tutorialPreview")
+                                    if !appModel.isTutorialPreviewOpen {
+                                        openWindow(id: "tutorialPreview")
+                                    }
                                     Task {
                                         await appModel.tutorialPlaybackManager.play(tutorial: selectedTutorial)
                                     }

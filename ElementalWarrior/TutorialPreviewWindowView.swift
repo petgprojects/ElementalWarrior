@@ -30,5 +30,12 @@ struct TutorialPreviewWindowView: View {
                     .cornerRadius(8)
             }
         }
+        .onAppear {
+            appModel.isTutorialPreviewOpen = true
+        }
+        .onDisappear {
+            appModel.isTutorialPreviewOpen = false
+            appModel.tutorialPlaybackManager.stop()
+        }
     }
 }

@@ -268,8 +268,10 @@ final class TutorialPlaybackManager {
     private var previewBoundsMax: SIMD3<Float>?
     private var handTargets = HandTargets(left: HandAnchor(), right: HandAnchor())
     private var skeletalStates: [SkeletalAnimationState] = []
+    private var lastLoopTime: TimeInterval = 0
+    private var activeLoopDuration: TimeInterval = 0
 
-    private let fireballOffset = SIMD3<Float>(0, 0.04, 0.10)
+    private let fireballOffset = SIMD3<Float>(0, 0.12, 0.18)
     private let flamethrowerOffset = SIMD3<Float>(0, 0, 0.07)
     private let fireballScale: Float = 0.35
     private let combinedFireballScale: Float = 0.52
@@ -345,6 +347,7 @@ final class TutorialPlaybackManager {
             effectAttachments.removeAll()
             skeletalStates = buildSkeletalStates(in: entity, animations: animations)
             handTargets = resolveHandTargets(in: entity)
+            activeLoopDuration = resolveLoopDuration(for: tutorial, animations: animations, skeletalStates: skeletalStates)
 
             activeEffect = configureEffects(for: tutorial, handTargets: handTargets)
 
@@ -394,6 +397,28 @@ final class TutorialPlaybackManager {
         print("[TutorialPlayback] Rest bounds: \(contentSize), estimated max extent: \(maxExtent), applied scale: \(currentStageScale)")
     }
 
+    private func resolveLoopDuration(for tutorial: HandTutorial,
+                                     animations: [AnimationResource],
+                                     skeletalStates: [SkeletalAnimationState]) -> TimeInterval {
+        var durations = skeletalStates.map { $0.sampledAnimation.duration }.filter { $0 > 0 }
+
+        if durations.isEmpty {
+            for animation in animations {
+                if let sampled = animation.definition as? SampledAnimation<JointTransforms> {
+                    durations.append(sampled.duration)
+                } else if let sampled = animation.definition as? SampledAnimation<Transform> {
+                    durations.append(sampled.duration)
+                }
+            }
+        }
+
+        if let maxDuration = durations.filter({ $0 > 0 }).max() {
+            return maxDuration
+        }
+
+        return tutorial.kind.loopDuration
+    }
+
     func stop(resetTutorial: Bool = false) {
         effectTask?.cancel()
         effectTask = nil
@@ -403,6 +428,7 @@ final class TutorialPlaybackManager {
         }
         animationControllers.removeAll()
 
+        removeActiveEffects()
         tutorialContainer.children.forEach { $0.removeFromParent() }
         tutorialEntity = nil
         activeEffect = ActiveEffect()
@@ -410,6 +436,8 @@ final class TutorialPlaybackManager {
         previewBoundsMin = nil
         previewBoundsMax = nil
         skeletalStates.removeAll()
+        lastLoopTime = 0
+        activeLoopDuration = 0
         isPlaying = false
 
         // Reset stage scale to base
@@ -515,6 +543,7 @@ final class TutorialPlaybackManager {
             let fireball = createRealisticFireball(scale: fireballScale)
             effect.rightFireball = attachEffect(fireball, offset: fireballOffset, anchor: handTargets.right)
             registerAttachment(effect.rightFireball, anchor: handTargets.right, offset: fireballOffset)
+            setVisibility(effect.rightFireball, isVisible: false)
         case .fireballCombineBoth:
             let leftFireball = createRealisticFireball(scale: fireballScale)
             let rightFireball = createRealisticFireball(scale: fireballScale)
@@ -525,11 +554,14 @@ final class TutorialPlaybackManager {
             registerAttachment(effect.leftFireball, anchor: handTargets.left, offset: fireballOffset)
             registerAttachment(effect.rightFireball, anchor: handTargets.right, offset: fireballOffset)
             registerAttachment(effect.combinedFireball, anchor: handTargets.right, offset: fireballOffset)
-            effect.combinedFireball?.isEnabled = false
+            setVisibility(effect.leftFireball, isVisible: false)
+            setVisibility(effect.rightFireball, isVisible: false)
+            setVisibility(effect.combinedFireball, isVisible: false)
         case .flamethrowerSummonRight:
             let stream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
             effect.rightFlamethrower = attachEffect(stream, offset: flamethrowerOffset, anchor: handTargets.right)
             registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
+            setVisibility(effect.rightFlamethrower, isVisible: false)
         case .flamethrowerCombineBoth:
             let leftStream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
             let rightStream = createFlamethrowerStream(scale: flamethrowerScale, muzzleScale: 0.5, jetIntensityMultiplier: 1.0)
@@ -540,7 +572,9 @@ final class TutorialPlaybackManager {
             registerAttachment(effect.leftFlamethrower, anchor: handTargets.left, offset: flamethrowerOffset)
             registerAttachment(effect.rightFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
             registerAttachment(effect.combinedFlamethrower, anchor: handTargets.right, offset: flamethrowerOffset)
-            effect.combinedFlamethrower?.isEnabled = false
+            setVisibility(effect.leftFlamethrower, isVisible: false)
+            setVisibility(effect.rightFlamethrower, isVisible: false)
+            setVisibility(effect.combinedFlamethrower, isVisible: false)
         case .wallSummonBoth,
              .wallHeightBoth,
              .wallLocationBoth,
@@ -597,6 +631,7 @@ final class TutorialPlaybackManager {
         effectTask?.cancel()
 
         let startTime = CACurrentMediaTime()
+        lastLoopTime = 0
         effectTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 let elapsed = CACurrentMediaTime() - startTime
@@ -609,8 +644,12 @@ final class TutorialPlaybackManager {
     private func updateEffects(for tutorial: HandTutorial, elapsedTime: TimeInterval = 0) {
         // Use our tracked elapsed time instead of controller time (which returns 0)
         let animationTime = elapsedTime
-        let duration = max(tutorial.kind.loopDuration, 0.001)
+        let duration = max(activeLoopDuration > 0 ? activeLoopDuration : tutorial.kind.loopDuration, 0.001)
         let timeInLoop = elapsedTime.truncatingRemainder(dividingBy: duration)
+        if timeInLoop < lastLoopTime {
+            resetLoopState()
+        }
+        lastLoopTime = timeInLoop
         updateEffectAnchors(animationTime: animationTime)
         updatePreviewBounds(animationTime: animationTime)
 
@@ -904,8 +943,44 @@ final class TutorialPlaybackManager {
         previewSize = clamp(size, min: previewMinSize, max: previewMaxSize)
     }
 
+    private func removeActiveEffects() {
+        let effectEntities: [Entity?] = [
+            activeEffect.leftFireball,
+            activeEffect.rightFireball,
+            activeEffect.combinedFireball,
+            activeEffect.leftFlamethrower,
+            activeEffect.rightFlamethrower,
+            activeEffect.combinedFlamethrower,
+            activeEffect.wallRoot
+        ]
+
+        for effect in effectEntities.compactMap({ $0 }) {
+            effect.removeFromParent()
+        }
+    }
+
     private func setVisibility(_ entity: Entity?, isVisible: Bool) {
-        entity?.isEnabled = isVisible
+        guard let entity else { return }
+        entity.isEnabled = true
+        entity.components.set(OpacityComponent(opacity: isVisible ? 1.0 : 0.0))
+        setLightVisibility(in: entity, isEnabled: isVisible)
+    }
+
+    private func setLightVisibility(in entity: Entity, isEnabled: Bool) {
+        for child in collectEntities(from: entity) {
+            if child.components[PointLightComponent.self] != nil ||
+                child.components[SpotLightComponent.self] != nil ||
+                child.components[DirectionalLightComponent.self] != nil {
+                child.isEnabled = isEnabled
+            }
+        }
+    }
+
+    private func resetLoopState() {
+        for index in effectAttachments.indices {
+            effectAttachments[index].isTracking = true
+            effectAttachments[index].frozenTransform = nil
+        }
     }
 
     private func lerp(from: Float, to: Float, t: Float) -> Float {

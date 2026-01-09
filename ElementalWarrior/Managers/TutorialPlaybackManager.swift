@@ -271,7 +271,12 @@ final class TutorialPlaybackManager {
     private var lastLoopTime: TimeInterval = 0
     private var activeLoopDuration: TimeInterval = 0
 
-    private let fireballOffset = SIMD3<Float>(0, 0.12, 0.18)
+    private let defaultFireballOffset = SIMD3<Float>(-0.3, 0.12, 0.18)
+    var fireballOffset: SIMD3<Float> {
+        didSet {
+            updateFireballOffsetAttachments()
+        }
+    }
     private let flamethrowerOffset = SIMD3<Float>(0, 0, 0.07)
     private let fireballScale: Float = 0.35
     private let combinedFireballScale: Float = 0.52
@@ -297,6 +302,7 @@ final class TutorialPlaybackManager {
     private let windowVolume: Float = 1.2 // Usable volume inside 1.5m window (with margin)
 
     init() {
+        fireballOffset = defaultFireballOffset
         rootEntity.name = "TutorialRoot"
         stageEntity.name = "TutorialStage"
         tutorialContainer.name = "TutorialContainer"
@@ -448,6 +454,10 @@ final class TutorialPlaybackManager {
             currentTutorial = nil
             lastError = nil
         }
+    }
+
+    func resetFireballOffset() {
+        fireballOffset = defaultFireballOffset
     }
 
     private func addLighting() {
@@ -973,6 +983,12 @@ final class TutorialPlaybackManager {
                 child.components[DirectionalLightComponent.self] != nil {
                 child.isEnabled = isEnabled
             }
+        }
+    }
+
+    private func updateFireballOffsetAttachments() {
+        for index in effectAttachments.indices where effectAttachments[index].effect.name == "RealisticFireball" {
+            effectAttachments[index].offset = fireballOffset
         }
     }
 

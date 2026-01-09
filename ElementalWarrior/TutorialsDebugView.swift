@@ -124,6 +124,7 @@ private struct TutorialsDetailView: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
+
                     } else {
                         Text("Select a tutorial to preview the hand animation.")
                             .font(.callout)

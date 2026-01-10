@@ -21,6 +21,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **Home Interface**: Frosted glass home window with Start/Quit controls and a Debug shortcut
 - **Debug Tutorials**: In-debug tutorial player with looping hand-animation previews for fireball, flamethrower, and wall gestures
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
+- **Thunderdome Environment**: USDZ immersive arena with a positioning window (X/Y/Z sliders in meters)
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming
 - **Scene Reconstruction**: Real-world surface detection with persistent mesh caching for fireball collisions
@@ -77,6 +78,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 - **Environment Expansion**
   - **Current**: Passthrough mixed reality mode
+  - **Current**: Thunderdome immersive arena (Reality Composer Pro USDZ)
   - **Planned**: Themed battle arenas (fire temple, water oasis, earth cavern, air temple)
 
 - **Progression System**
@@ -97,7 +99,9 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 #### App Structure (`ElementalWarriorApp.swift`)
 - `WindowGroup` ("home"): Main home window with menu interface
+- `WindowGroup` ("thunderdomePosition"): Slider window for positioning the thunderdome environment
 - `ImmersiveSpace` ("arena"): Full immersive environment using `.mixed` immersion style
+- `ImmersiveSpace` ("thunderdome"): Thunderdome environment using `.full` immersion style
 - Supports simultaneous window and immersive space display
 
 #### Views
@@ -105,6 +109,8 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **HomeView** (`HomeView.swift`): Entry point with frosted glass home UI, Start/Quit controls, and Debug shortcut
 - **DebugWindowView** (`DebugWindowView.swift`): Sidebar-tabbed debug window for hand state, room scanning, tutorial playback, and tuning options
 - **ArenaImmersiveView** (`ArenaImmersiveView.swift`): Immersive passthrough environment with hand tracking
+- **ThunderdomeImmersiveView** (`ThunderdomeImmersiveView.swift`): Immersive USDZ environment with hand tracking
+- **ThunderdomePositionWindowView** (`ThunderdomePositionWindowView.swift`): Slider window for moving the thunderdome relative to the user
 
 #### Hand Tracking System (Managers/)
 
@@ -158,10 +164,13 @@ ElementalWarrior/
 │   ├── AppModel.swift                  # App-wide state management
 │   ├── HomeView.swift                  # Main menu interface
 │   ├── ArenaImmersiveView.swift        # Immersive view setup
+│   ├── ThunderdomeImmersiveView.swift  # Thunderdome immersive environment
+│   ├── ThunderdomePositionWindowView.swift # Thunderdome position sliders
 │   ├── TutorialsDebugView.swift        # Debug tutorial player UI
 │   ├── Info.plist                      # App permissions (hand/world sensing)
 │   ├── Managers/
 │   │   ├── HandTrackingManager.swift   # Central hand tracking orchestrator
+│   │   ├── ThunderdomeManager.swift    # Thunderdome loading + positioning
 │   │   ├── TutorialPlaybackManager.swift # Tutorial animation playback and VFX previews
 │   │   ├── GestureTypes.swift          # Shared types and constants
 │   │   ├── GestureSettings.swift       # Tunable gesture constants for the debug window

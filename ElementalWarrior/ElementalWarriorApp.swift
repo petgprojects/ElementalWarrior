@@ -33,6 +33,13 @@ struct ElementalWarriorApp: App {
             return WindowPlacement(.utilityPanel)
         }
 
+        WindowGroup(id: "thunderdomePosition") {
+            ThunderdomePositionWindowView()
+                .environment(appModel)
+        }
+        .windowStyle(.plain)
+        .defaultSize(width: 360, height: 320)
+
         WindowGroup(id: "tutorialPreview") {
             TutorialPreviewWindowView()
                 .environment(appModel)
@@ -45,5 +52,11 @@ struct ElementalWarriorApp: App {
                 .environment(appModel)
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
+
+        ImmersiveSpace(id: "thunderdome") {
+            ThunderdomeImmersiveView()
+                .environment(appModel)
+        }
+        .immersionStyle(selection: .constant(.full), in: .full)
     }
 }

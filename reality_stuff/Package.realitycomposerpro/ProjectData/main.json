@@ -1,0 +1,17 @@
+{
+  "pathsToIds" : {
+    "\/reality_stuff\/Sources\/reality_stuff\/reality_stuff.rkassets\/Scene.usda" : "789C73C6-E9B3-4A84-BEA6-2D1AAC86B0A4",
+    "reality_stuff\/Sources\/reality_stuff\/reality_stuff.rkassets\/Scene.usda" : "F0B58930-CEE0-4130-A9B4-651FB0AAFA05",
+    "reality_stuff\/Sources\/reality_stuff\/reality_stuff.rkassets\/thunderdome.usdc" : "B3A684A8-D3DD-4A23-BB35-9205517E93D3",
+    "reality_stuff\/Sources\/reality_stuff\/reality_stuff.rkassets\/thunderdome\/thunderdome.usda" : "163C88A6-8DB6-468B-B494-FBC3F723BE53",
+    "reality_stuff\/Sources\/reality_stuff\/reality_stuff.rkassets\/thunderdome\/thunderdome.usdc" : "B0205D00-33DA-4671-84DE-3DE339DF0A2F"
+  },
+  "projectID" : 8749967709894512202,
+  "uuidToIntID" : {
+    "163C88A6-8DB6-468B-B494-FBC3F723BE53" : 8129895635570605019,
+    "789C73C6-E9B3-4A84-BEA6-2D1AAC86B0A4" : 5638014937702760899,
+    "B0205D00-33DA-4671-84DE-3DE339DF0A2F" : -5083098289318261631,
+    "B3A684A8-D3DD-4A23-BB35-9205517E93D3" : -2239413213472457430,
+    "F0B58930-CEE0-4130-A9B4-651FB0AAFA05" : -714351420039131223
+  }
+}

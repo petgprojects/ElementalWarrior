@@ -21,7 +21,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **Home Interface**: Frosted glass home window with Start/Quit controls and a Debug shortcut
 - **Debug Tutorials**: In-debug tutorial player with looping hand-animation previews for fireball, flamethrower, and wall gestures
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
-- **Thunderdome Environment**: USDZ immersive arena with a positioning window (X/Y/Z sliders in meters)
+- **Thunderdome Environment**: USDZ immersive arena with environment collision and a positioning window (X/Y/Z sliders + snap-to-floor)
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming
 - **Scene Reconstruction**: Real-world surface detection with persistent mesh caching for fireball collisions
@@ -78,7 +78,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 - **Environment Expansion**
   - **Current**: Passthrough mixed reality mode
-  - **Current**: Thunderdome immersive arena (Reality Composer Pro USDZ)
+  - **Current**: Thunderdome immersive arena (Reality Composer Pro USDZ) with environment collision
   - **Planned**: Themed battle arenas (fire temple, water oasis, earth cavern, air temple)
 
 - **Progression System**

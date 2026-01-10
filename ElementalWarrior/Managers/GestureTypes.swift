@@ -82,6 +82,13 @@ struct CachedMeshGeometry {
     var lastUpdated: Date
 }
 
+// MARK: - Collision Groups
+
+enum CollisionGroups {
+    static let sceneMesh = CollisionGroup(rawValue: 1 << 1)
+    static let thunderdome = CollisionGroup(rawValue: 1 << 2)
+}
+
 // MARK: - Timing Constants
 
 /// Central configuration for timing and threshold constants

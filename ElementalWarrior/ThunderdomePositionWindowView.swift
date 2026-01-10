@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import RealityKit
 
 struct ThunderdomePositionWindowView: View {
     @Environment(AppModel.self) private var appModel
@@ -55,6 +56,15 @@ struct ThunderdomePositionWindowView: View {
             }
 
             HStack {
+                Button("Snap to Floor") {
+                    appModel.thunderdomeManager.snapToFloor(
+                        scene: appModel.handTrackingManager.rootEntity.scene,
+                        deviceTransform: appModel.handTrackingManager.latestDeviceTransform
+                    )
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canSnapToFloor)
+
                 Button("Reset") {
                     appModel.thunderdomeManager.resetPosition()
                 }
@@ -63,6 +73,11 @@ struct ThunderdomePositionWindowView: View {
         }
         .padding(24)
         .frame(width: 360)
+    }
+
+    private var canSnapToFloor: Bool {
+        appModel.thunderdomeManager.isEnvironmentReady &&
+            appModel.handTrackingManager.latestDeviceTransform != nil
     }
 
     private func axisBinding(_ axis: Axis) -> Binding<Double> {

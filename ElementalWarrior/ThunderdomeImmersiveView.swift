@@ -17,7 +17,11 @@ struct ThunderdomeImmersiveView: View {
             content.add(appModel.handTrackingManager.rootEntity)
         }
         .task {
+            appModel.handTrackingManager.collisionMode = .none
             await appModel.thunderdomeManager.loadEnvironment()
+            if appModel.thunderdomeManager.isEnvironmentReady {
+                appModel.handTrackingManager.collisionMode = .thunderdome
+            }
         }
         .task {
             await appModel.handTrackingManager.startHandTracking()

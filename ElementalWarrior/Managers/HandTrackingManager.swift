@@ -19,6 +19,15 @@ import UIKit
 final class HandTrackingManager {
     let rootEntity = Entity()
 
+    enum CollisionMode {
+        case none
+        case sceneReconstruction
+        case thunderdome
+    }
+
+    var collisionMode: CollisionMode = .sceneReconstruction
+    var latestDeviceTransform: simd_float4x4?
+
     private struct HandPoseSnapshot {
         var palmPosition: SIMD3<Float> = .zero
         var palmNormal: SIMD3<Float> = .zero
@@ -557,6 +566,7 @@ final class HandTrackingManager {
 
             let skeleton = anchor.handSkeleton
             let deviceTransform = worldTracking.queryDeviceAnchor(atTimestamp: now)?.originFromAnchorTransform
+            latestDeviceTransform = deviceTransform
 
             let shouldShowFireball = GestureDetection.checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
             let shouldUseFlamethrower = GestureDetection.checkShouldFireFlamethrower(
@@ -1075,11 +1085,10 @@ final class HandTrackingManager {
         let avgScorchTime = max(leftHandState.lastFlamethrowerScorchTime, rightHandState.lastFlamethrowerScorchTime)
         if now - avgScorchTime > GestureConstants.flamethrowerScorchCooldown {
             // Raycast from combined position
-            if let hit = CollisionSystem.raycastBeam(
+            if let hit = raycastBeam(
                 origin: midpoint + avgDirection * 0.02,
                 direction: avgDirection,
-                maxDistance: GestureConstants.flamethrowerRange,
-                meshCache: persistentMeshCache
+                maxDistance: GestureConstants.flamethrowerRange
             ) {
                 leftHandState.lastFlamethrowerScorchTime = now
                 rightHandState.lastFlamethrowerScorchTime = now
@@ -1394,6 +1403,61 @@ final class HandTrackingManager {
 
     // MARK: - Flamethrower
 
+    private func raycastBeam(
+        origin: SIMD3<Float>,
+        direction: SIMD3<Float>,
+        maxDistance: Float
+    ) -> CollisionSystem.HitResult? {
+        switch collisionMode {
+        case .none:
+            return nil
+        case .sceneReconstruction:
+            return CollisionSystem.raycastBeam(
+                origin: origin,
+                direction: direction,
+                maxDistance: maxDistance,
+                meshCache: persistentMeshCache
+            )
+        case .thunderdome:
+            guard let scene = rootEntity.scene else { return nil }
+            return CollisionSystem.raycastScene(
+                scene: scene,
+                origin: origin,
+                direction: direction,
+                maxDistance: maxDistance,
+                mask: CollisionGroups.thunderdome,
+                minDistance: 0.02
+            )
+        }
+    }
+
+    private func raycastProjectile(
+        from previousPosition: SIMD3<Float>,
+        to newPosition: SIMD3<Float>,
+        direction: SIMD3<Float>
+    ) -> CollisionSystem.HitResult? {
+        switch collisionMode {
+        case .none:
+            return nil
+        case .sceneReconstruction:
+            return CollisionSystem.checkProjectileCollision(
+                projectilePosition: newPosition,
+                direction: direction,
+                previousPosition: previousPosition,
+                meshCache: persistentMeshCache
+            )
+        case .thunderdome:
+            guard let scene = rootEntity.scene else { return nil }
+            return CollisionSystem.raycastScene(
+                scene: scene,
+                from: previousPosition,
+                to: newPosition,
+                mask: CollisionGroups.thunderdome,
+                minDistance: 0.05
+            )
+        }
+    }
+
     private func updateFlamethrower(
         for hand: HandAnchor.Chirality,
         position: SIMD3<Float>,
@@ -1443,12 +1507,7 @@ final class HandTrackingManager {
 
         // Limit expensive mesh raycasts to reduce main-actor load
         if now - state.lastFlamethrowerRaycastTime > GestureConstants.flamethrowerRaycastInterval {
-            hit = CollisionSystem.raycastBeam(
-                origin: origin,
-                direction: direction,
-                maxDistance: maxRange,
-                meshCache: persistentMeshCache
-            )
+            hit = raycastBeam(origin: origin, direction: direction, maxDistance: maxRange)
             state.lastFlamethrowerRaycastTime = now
             state.lastFlamethrowerHitDistance = hit.map { simd_distance(origin, $0.position) } ?? maxRange
         } else {
@@ -2560,11 +2619,10 @@ final class HandTrackingManager {
 
     private func gazeGroundHit(deviceTransform: simd_float4x4?) -> CollisionSystem.HitResult? {
         guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return nil }
-        guard let hit = CollisionSystem.raycastBeam(
+        guard let hit = raycastBeam(
             origin: pose.position,
             direction: pose.forward,
-            maxDistance: GestureConstants.wallPlacementMaxDistance,
-            meshCache: persistentMeshCache
+            maxDistance: GestureConstants.wallPlacementMaxDistance
         ) else {
             return nil
         }
@@ -2773,15 +2831,15 @@ final class HandTrackingManager {
 
                 let newPosition = projectile.startPosition + projectile.direction * travelDistance
 
-                if let hit = CollisionSystem.checkProjectileCollision(
-                    projectilePosition: newPosition,
-                    direction: projectile.direction,
-                    previousPosition: projectile.previousPosition,
-                    meshCache: persistentMeshCache
+                if let hit = raycastProjectile(
+                    from: projectile.previousPosition,
+                    to: newPosition,
+                    direction: projectile.direction
                 ) {
                     await triggerExplosion(at: hit.position, normal: hit.normal, projectileID: id, isMega: projectile.isMegaFireball)
                     projectilesToRemove.append(id)
-                    print("\(projectile.isMegaFireball ? "MEGA " : "")Fireball hit real-world surface at \(hit.position)")
+                    let surfaceLabel = collisionMode == .thunderdome ? "environment" : "real-world"
+                    print("\(projectile.isMegaFireball ? "MEGA " : "")Fireball hit \(surfaceLabel) surface at \(hit.position)")
                     continue
                 }
 
@@ -3006,7 +3064,7 @@ final class HandTrackingManager {
             let shape = try await ShapeResource.generateStaticMesh(from: anchor)
             var collision = CollisionComponent(shapes: [shape])
             collision.filter = CollisionFilter(
-                group: CollisionGroup(rawValue: 1 << 1),
+                group: CollisionGroups.sceneMesh,
                 mask: CollisionGroup(rawValue: 1 << 0)
             )
             entity.components.set(collision)

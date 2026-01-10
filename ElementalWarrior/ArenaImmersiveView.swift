@@ -17,6 +17,7 @@ struct ArenaImmersiveView: View {
             content.add(appModel.handTrackingManager.rootEntity)
         }
         .task {
+            appModel.handTrackingManager.collisionMode = .sceneReconstruction
             await appModel.handTrackingManager.startHandTracking()
         }
     }

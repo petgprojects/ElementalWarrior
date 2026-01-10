@@ -4,25 +4,16 @@
       [
         "163C88A6-8DB6-468B-B494-FBC3F723BE53",
         "root",
-        "Sphere_1"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
-        "root",
-        "_materials"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
-        "root",
         "Sphere"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
+        "root",
+        "Sphere_1"
       ],
       {
         "isExpanded" : true,
@@ -40,6 +31,15 @@
         "163C88A6-8DB6-468B-B494-FBC3F723BE53",
         "root",
         "Plane"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
+        "root",
+        "_materials"
       ],
       {
         "isExpanded" : true,

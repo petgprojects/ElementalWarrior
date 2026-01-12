@@ -82,7 +82,41 @@
       [
         "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
         "root",
+        "wood_pole4",
+        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003",
+        "RootNode_006"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
+        "wood_pole4",
+        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003",
+        "RootNode_006",
+        "pCube78_003",
+        "pCube78_Wood_0_003"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
         "_materials"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
+        "wood_pole4",
+        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003"
       ],
       {
         "isExpanded" : true,
@@ -111,6 +145,36 @@
         "root",
         "wood_pole",
         "lantern"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
+        "gargoyle_1"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
+        "wood_pole4",
+        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003",
+        "RootNode_006",
+        "pCube78_003"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
+        "wood_pole4"
       ],
       {
         "isExpanded" : true,

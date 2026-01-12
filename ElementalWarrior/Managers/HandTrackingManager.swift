@@ -172,6 +172,9 @@ final class HandTrackingManager {
     private var isTeleportArmed: Bool = false
     private var teleportIndicator: Entity?
     private var teleportTargetPosition: SIMD3<Float>?
+    private var teleportControlHand: HandAnchor.Chirality?
+    private var teleportBaseGazePosition: SIMD3<Float>?
+    private var teleportBaseHandPosition: SIMD3<Float>?
     private var lastTeleportTapTime: TimeInterval = 0
     private var lastTeleportIndicatorUpdateTime: TimeInterval = 0
 
@@ -583,8 +586,8 @@ final class HandTrackingManager {
             let deviceTransform = worldTracking.queryDeviceAnchor(atTimestamp: now)?.originFromAnchorTransform
             latestDeviceTransform = deviceTransform
 
-            let shouldShowFireball = GestureDetection.checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
-            let shouldUseFlamethrower = GestureDetection.checkShouldFireFlamethrower(
+            var shouldShowFireball = GestureDetection.checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
+            var shouldUseFlamethrower = GestureDetection.checkShouldFireFlamethrower(
                 anchor: anchor,
                 skeleton: skeleton,
                 deviceTransform: deviceTransform
@@ -612,34 +615,6 @@ final class HandTrackingManager {
             let distInfo2 = distToRightFireball.map { "toR:\(String(format: "%.2f", $0))m" } ?? ""
             let distString = [distInfo, distInfo2].filter { !$0.isEmpty }.joined(separator: " ")
             let hasSkeleton = skeleton != nil
-
-            if isLeft {
-                if isCollidingWithFireball {
-                    leftHandGestureState = .collision
-                } else if shouldUseFlamethrower {
-                    leftHandGestureState = .flamethrower
-                } else if isFist {
-                    leftHandGestureState = .fist
-                } else if shouldShowFireball {
-                    leftHandGestureState = leftHandState.isShowingFireball ? .holdingFireball : .summon
-                } else {
-                    leftHandGestureState = .none
-                }
-                leftDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebug.summary)"
-            } else {
-                if isCollidingWithFireball {
-                    rightHandGestureState = .collision
-                } else if shouldUseFlamethrower {
-                    rightHandGestureState = .flamethrower
-                } else if isFist {
-                    rightHandGestureState = .fist
-                } else if shouldShowFireball {
-                    rightHandGestureState = rightHandState.isShowingFireball ? .holdingFireball : .summon
-                } else {
-                    rightHandGestureState = .none
-                }
-                rightDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebug.summary)"
-            }
 
             let hasLeftFireball = leftHandState.fireball != nil
             let hasRightFireball = rightHandState.fireball != nil
@@ -674,10 +649,50 @@ final class HandTrackingManager {
                 now: now
             )
             if didTeleportTap {
-                handleTeleportTap(now: now, deviceTransform: deviceTransform)
+                handleTeleportTap(
+                    hand: isLeft ? .left : .right,
+                    handPosition: palmPosition,
+                    now: now,
+                    deviceTransform: deviceTransform
+                )
             }
             if isTeleportArmed {
                 updateTeleportIndicator(deviceTransform: deviceTransform, now: now)
+            }
+
+            let isLocomotionHand = isHandInLocomotion(isLeft: isLeft)
+            if isLocomotionHand {
+                shouldShowFireball = false
+                shouldUseFlamethrower = false
+            }
+            let isFistForActions = isLocomotionHand ? false : isFist
+
+            if isLeft {
+                if isCollidingWithFireball {
+                    leftHandGestureState = .collision
+                } else if shouldUseFlamethrower {
+                    leftHandGestureState = .flamethrower
+                } else if isFist {
+                    leftHandGestureState = .fist
+                } else if shouldShowFireball {
+                    leftHandGestureState = leftHandState.isShowingFireball ? .holdingFireball : .summon
+                } else {
+                    leftHandGestureState = .none
+                }
+                leftDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebug.summary)"
+            } else {
+                if isCollidingWithFireball {
+                    rightHandGestureState = .collision
+                } else if shouldUseFlamethrower {
+                    rightHandGestureState = .flamethrower
+                } else if isFist {
+                    rightHandGestureState = .fist
+                } else if shouldShowFireball {
+                    rightHandGestureState = rightHandState.isShowingFireball ? .holdingFireball : .summon
+                } else {
+                    rightHandGestureState = .none
+                }
+                rightDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebug.summary)"
             }
 
             let poseActive = isZombiePoseDetected(now: now)
@@ -704,7 +719,7 @@ final class HandTrackingManager {
                     position: palmPosition,
                     palmNormal: palmNormal,
                     fistPosition: fistPosition,
-                    isFist: isFist,
+                    isFist: isFistForActions,
                     anchor: anchor
                 )
             } else {
@@ -715,7 +730,7 @@ final class HandTrackingManager {
                     position: palmPosition,
                     palmNormal: palmNormal,
                     fistPosition: fistPosition,
-                    isFist: isFist,
+                    isFist: isFistForActions,
                     anchor: anchor
                 )
             }
@@ -1922,7 +1937,12 @@ final class HandTrackingManager {
         return !wasPinching && snapshot.isPinching
     }
 
-    private func handleTeleportTap(now: TimeInterval, deviceTransform: simd_float4x4?) {
+    private func handleTeleportTap(
+        hand: HandAnchor.Chirality,
+        handPosition: SIMD3<Float>,
+        now: TimeInterval,
+        deviceTransform: simd_float4x4?
+    ) {
         guard collisionMode == .thunderdome else { return }
         guard now - lastTeleportTapTime >= GestureConstants.teleportTapCooldown else { return }
         lastTeleportTapTime = now
@@ -1930,15 +1950,29 @@ final class HandTrackingManager {
         if isTeleportArmed {
             confirmTeleport(deviceTransform: deviceTransform)
         } else {
-            beginTeleport(deviceTransform: deviceTransform, now: now)
+            beginTeleport(hand: hand, handPosition: handPosition, deviceTransform: deviceTransform, now: now)
         }
     }
 
-    private func beginTeleport(deviceTransform: simd_float4x4?, now: TimeInterval) {
+    private func beginTeleport(
+        hand: HandAnchor.Chirality,
+        handPosition: SIMD3<Float>,
+        deviceTransform: simd_float4x4?,
+        now: TimeInterval
+    ) {
         isTeleportArmed = true
+        teleportControlHand = hand
+        teleportBaseHandPosition = handPosition
+        teleportBaseGazePosition = gazeGroundHit(
+            deviceTransform: deviceTransform,
+            maxDistance: GestureConstants.teleportMaxDistance
+        )?.position
         lastTeleportIndicatorUpdateTime = 0
         let marker = ensureTeleportIndicator()
         marker.isEnabled = true
+        Task {
+            await suppressEffectsForLocomotion(hand: hand)
+        }
         updateTeleportIndicator(deviceTransform: deviceTransform, now: now, forceUpdate: true)
     }
 
@@ -1952,6 +1986,9 @@ final class HandTrackingManager {
     private func endTeleport() {
         isTeleportArmed = false
         teleportTargetPosition = nil
+        teleportControlHand = nil
+        teleportBaseGazePosition = nil
+        teleportBaseHandPosition = nil
         teleportIndicator?.isEnabled = false
     }
 
@@ -1984,13 +2021,76 @@ final class HandTrackingManager {
         lastTeleportIndicatorUpdateTime = now
 
         guard let indicator = teleportIndicator else { return }
-        if let hit = gazeGroundHit(deviceTransform: deviceTransform) {
-            indicator.isEnabled = true
-            indicator.position = hit.position + SIMD3<Float>(0, GestureConstants.teleportMarkerYOffset, 0)
-            teleportTargetPosition = hit.position
-        } else {
+        guard let hit = gazeGroundHit(
+            deviceTransform: deviceTransform,
+            maxDistance: GestureConstants.teleportMaxDistance
+        ) else {
             indicator.isEnabled = false
             teleportTargetPosition = nil
+            return
+        }
+
+        var gazePosition = hit.position
+        if let baseGaze = teleportBaseGazePosition {
+            if simd_distance(baseGaze, gazePosition) > GestureConstants.teleportGazeResetDistance {
+                teleportBaseGazePosition = gazePosition
+                teleportBaseHandPosition = currentTeleportHandPosition(now: now)
+            } else {
+                gazePosition = baseGaze
+            }
+        } else {
+            teleportBaseGazePosition = gazePosition
+            teleportBaseHandPosition = currentTeleportHandPosition(now: now)
+        }
+
+        let baseGaze = teleportBaseGazePosition ?? gazePosition
+        var handOffset = SIMD3<Float>.zero
+        if let baseHand = teleportBaseHandPosition,
+           let currentHand = currentTeleportHandPosition(now: now) {
+            let delta = currentHand - baseHand
+            let worldUp = SIMD3<Float>(0, 1, 0)
+            let planeDelta = delta - worldUp * simd_dot(delta, worldUp)
+            handOffset = planeDelta * GestureConstants.teleportHandMoveScale
+        }
+
+        let targetPosition = baseGaze + handOffset
+        indicator.isEnabled = true
+        indicator.position = targetPosition + SIMD3<Float>(0, GestureConstants.teleportMarkerYOffset, 0)
+        teleportTargetPosition = targetPosition
+    }
+
+    private func isHandInLocomotion(isLeft: Bool) -> Bool {
+        guard isTeleportArmed, let controlHand = teleportControlHand else { return false }
+        return controlHand == (isLeft ? .left : .right)
+    }
+
+    private func currentTeleportHandPosition(now: TimeInterval) -> SIMD3<Float>? {
+        guard let controlHand = teleportControlHand else { return nil }
+        switch controlHand {
+        case .left:
+            guard now - leftPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow else { return nil }
+            return leftPoseSnapshot.palmPosition
+        case .right:
+            guard now - rightPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow else { return nil }
+            return rightPoseSnapshot.palmPosition
+        @unknown default:
+            return nil
+        }
+    }
+
+    private func suppressEffectsForLocomotion(hand: HandAnchor.Chirality) async {
+        await stopFlamethrower(for: hand)
+        switch hand {
+        case .left:
+            if leftHandState.fireball != nil {
+                await extinguishLeft()
+            }
+        case .right:
+            if rightHandState.fireball != nil {
+                await extinguishRight()
+            }
+        @unknown default:
+            break
         }
     }
 
@@ -2744,12 +2844,15 @@ final class HandTrackingManager {
         return closestID
     }
 
-    private func gazeGroundHit(deviceTransform: simd_float4x4?) -> CollisionSystem.HitResult? {
+    private func gazeGroundHit(
+        deviceTransform: simd_float4x4?,
+        maxDistance: Float = GestureConstants.wallPlacementMaxDistance
+    ) -> CollisionSystem.HitResult? {
         guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return nil }
         guard let hit = raycastBeam(
             origin: pose.position,
             direction: pose.forward,
-            maxDistance: GestureConstants.wallPlacementMaxDistance
+            maxDistance: maxDistance
         ) else {
             return nil
         }

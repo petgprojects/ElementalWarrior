@@ -161,6 +161,10 @@ enum GestureConstants {
     static var teleportPinchReleaseDistance: Float = 0.04     // meters distance to release pinch
     static var teleportTapCooldown: TimeInterval = 0.25       // seconds between teleport taps
     static var teleportIndicatorUpdateInterval: TimeInterval = 0.05 // seconds between gaze updates
+    static var teleportMaxDistance: Float = 12.0              // meters for gaze raycast
+    static var teleportGazeResetDistance: Float = 0.6         // meters to treat gaze as a new target
+    static var teleportHandMoveScale: Float = 2.0             // scale for hand-driven fine tuning
+    static var teleportSlideDuration: TimeInterval = 0.5      // seconds to slide to target
     static var teleportMarkerRadius: Float = 0.22             // meters radius for ground marker
     static var teleportMarkerThickness: Float = 0.003         // meters for marker thickness
     static var teleportMarkerYOffset: Float = 0.008           // meters above ground to avoid z-fighting

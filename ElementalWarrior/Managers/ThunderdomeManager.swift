@@ -28,6 +28,7 @@ final class ThunderdomeManager {
     private var hasLoaded = false
     private var hasAppliedInitialHeight = false
     private var isCalibratingHeight = false
+    private var teleportTask: Task<Void, Never>?
 
     init() {
         rootEntity.name = "ThunderdomeRoot"
@@ -106,10 +107,23 @@ final class ThunderdomeManager {
         )
         let delta = devicePosition - targetPosition
 
-        var newPosition = position
+        var newPosition = rootEntity.position
         newPosition.x += delta.x
         newPosition.z += delta.z
-        position = newPosition
+
+        teleportTask?.cancel()
+        rootEntity.stopAllAnimations()
+
+        let duration = GestureConstants.teleportSlideDuration
+        var transform = rootEntity.transform
+        transform.translation = newPosition
+        rootEntity.move(to: transform, relativeTo: rootEntity.parent, duration: duration, timingFunction: .easeInOut)
+
+        teleportTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(Int(duration * 1000)))
+            guard !Task.isCancelled else { return }
+            position = newPosition
+        }
     }
 
     private func thunderdomeResourceURL() -> URL? {

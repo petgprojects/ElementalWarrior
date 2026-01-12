@@ -53,6 +53,7 @@ final class ThunderdomeManager {
             entity.position = .zero
             entity.generateCollisionShapes(recursive: true, static: true)
             applyCollisionFilter(to: entity)
+            addSunLight(to: entity)
             rootEntity.addChild(entity)
             isEnvironmentReady = true
         } catch {
@@ -136,5 +137,26 @@ final class ThunderdomeManager {
         for child in entity.children {
             applyCollisionFilter(to: child)
         }
+    }
+
+    private func addSunLight(to entity: Entity) {
+        let lightEntity = Entity()
+        lightEntity.name = "ThunderdomeSunLight"
+
+        // USDZ uses centimeters; RealityKit uses meters.
+        let centimetersToMeters: Float = 0.01
+        let lightPosition = SIMD3<Float>(
+            7400.0 * centimetersToMeters,
+            5000.0 * centimetersToMeters,
+            -90.0 * centimetersToMeters
+        )
+
+        var lightComponent = DirectionalLightComponent()
+        lightComponent.color = .white
+        lightComponent.intensity = 10000
+        lightEntity.components.set(lightComponent)
+        lightEntity.look(at: .zero, from: lightPosition, relativeTo: entity)
+
+        entity.addChild(lightEntity)
     }
 }

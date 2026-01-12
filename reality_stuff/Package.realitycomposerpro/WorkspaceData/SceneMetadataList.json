@@ -25,7 +25,7 @@
       [
         "163C88A6-8DB6-468B-B494-FBC3F723BE53",
         "root",
-        "_materials"
+        "Sphere_1"
       ],
       {
         "isExpanded" : true,
@@ -34,7 +34,7 @@
       [
         "163C88A6-8DB6-468B-B494-FBC3F723BE53",
         "root",
-        "Sphere_1"
+        "_materials"
       ],
       {
         "isExpanded" : true,
@@ -73,7 +73,7 @@
       [
         "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
         "root",
-        "wood_pole"
+        "dome"
       ],
       {
         "isExpanded" : true,
@@ -81,51 +81,7 @@
       },
       [
         "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "wood_pole4",
-        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003",
-        "RootNode_006"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "wood_pole4",
-        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003",
-        "RootNode_006",
-        "pCube78_003",
-        "pCube78_Wood_0_003"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "_materials"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "wood_pole4",
-        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "Plane"
+        "root"
       ],
       {
         "isExpanded" : true,
@@ -143,8 +99,7 @@
       [
         "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
         "root",
-        "wood_pole",
-        "lantern"
+        "Plane"
       ],
       {
         "isExpanded" : true,
@@ -154,35 +109,6 @@
         "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
         "root",
         "gargoyle_1"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "wood_pole4",
-        "be6b70e45c1648f78d08816c3a76c1a7_fbx_003",
-        "RootNode_006",
-        "pCube78_003"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "wood_pole4"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root"
       ],
       {
         "isExpanded" : true,
@@ -218,14 +144,6 @@
     "objectMetadataList" : [
       [
         "901BFCC2-6F40-48A1-B067-C6210A64F955",
-        "root"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "901BFCC2-6F40-48A1-B067-C6210A64F955",
         "root",
         "_materials"
       ],
@@ -241,6 +159,14 @@
       {
         "isExpanded" : true,
         "isLocked" : false
+      },
+      [
+        "901BFCC2-6F40-48A1-B067-C6210A64F955",
+        "root"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
       }
     ]
   },
@@ -248,8 +174,7 @@
     "objectMetadataList" : [
       [
         "B0205D00-33DA-4671-84DE-3DE339DF0A2F",
-        "root",
-        "Plane"
+        "root"
       ],
       {
         "isExpanded" : true,
@@ -257,7 +182,8 @@
       },
       [
         "B0205D00-33DA-4671-84DE-3DE339DF0A2F",
-        "root"
+        "root",
+        "Plane"
       ],
       {
         "isExpanded" : true,
@@ -269,8 +195,7 @@
     "objectMetadataList" : [
       [
         "B3A684A8-D3DD-4A23-BB35-9205517E93D3",
-        "root",
-        "Plane"
+        "root"
       ],
       {
         "isExpanded" : true,
@@ -278,7 +203,8 @@
       },
       [
         "B3A684A8-D3DD-4A23-BB35-9205517E93D3",
-        "root"
+        "root",
+        "Plane"
       ],
       {
         "isExpanded" : true,
@@ -291,6 +217,54 @@
       [
         "F0B58930-CEE0-4130-A9B4-651FB0AAFA05",
         "Root"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      }
+    ]
+  },
+  "F192C361-C0C3-48D0-8D4B-221028949E3C" : {
+    "objectMetadataList" : [
+      [
+        "F192C361-C0C3-48D0-8D4B-221028949E3C",
+        "root",
+        "Plane"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "F192C361-C0C3-48D0-8D4B-221028949E3C",
+        "root",
+        "dome"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "F192C361-C0C3-48D0-8D4B-221028949E3C",
+        "root",
+        "skybox"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "F192C361-C0C3-48D0-8D4B-221028949E3C",
+        "root",
+        "_materials"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "F192C361-C0C3-48D0-8D4B-221028949E3C",
+        "root"
       ],
       {
         "isExpanded" : true,

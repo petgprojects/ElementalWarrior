@@ -22,6 +22,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **Debug Tutorials**: In-debug tutorial player with looping hand-animation previews for fireball, flamethrower, and wall gestures
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
 - **Thunderdome Environment**: USDZ immersive arena with environment collision and a positioning window (X/Y/Z sliders + snap-to-floor)
+- **Teleport Locomotion**: Middle-finger + thumb tap to place a blue gaze marker and tap again to teleport within the thunderdome
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming
 - **Scene Reconstruction**: Real-world surface detection with persistent mesh caching for fireball collisions
@@ -32,6 +33,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Both hands work independently and simultaneously
   - Intent-based gesture system with delayed despawn (1.5s grace period)
   - 2-second tracking loss grace period
+  - Middle-thumb pinch tap for thunderdome teleport targeting
 - **Fire Bending**:
   - Realistic multi-layered fireball particle effects
   - Fireballs appear in open palms and track hand position
@@ -126,6 +128,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **ScorchMarkEffects**: Procedural scorch marks with ember glow animation
 - **FlamethrowerEffects**: Multi-layer flamethrower stream with configurable muzzle and jet intensity for single/combined modes
 - **FireWallEffects**: Ember line placement and wall of fire sheet emitters with highlight palettes
+- **TeleportEffects**: Gaze-based teleport marker visuals
 
 #### State Management
 
@@ -181,7 +184,8 @@ ElementalWarrior/
 │       ├── ExplosionEffects.swift      # Explosion particle effects
 │       ├── ScorchMarkEffects.swift     # Procedural scorch marks
 │       ├── FlamethrowerEffects.swift   # Flamethrower stream effects
-│       └── FireWallEffects.swift       # Wall of fire and ember line effects
+│       ├── FireWallEffects.swift       # Wall of fire and ember line effects
+│       └── TeleportEffects.swift       # Teleport marker visuals
 ├── RealityAssetStuff/                  # Reality Composer Pro project (experimental)
 ├── CLAUDE.md                           # Developer guidance for AI assistants
 └── ElementalWarrior.xcodeproj/         # Xcode project

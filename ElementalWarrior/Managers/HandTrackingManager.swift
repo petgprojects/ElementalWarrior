@@ -27,6 +27,7 @@ final class HandTrackingManager {
 
     var collisionMode: CollisionMode = .sceneReconstruction
     var latestDeviceTransform: simd_float4x4?
+    var teleportHandler: ((SIMD3<Float>, simd_float4x4?) -> Void)?
 
     private struct HandPoseSnapshot {
         var palmPosition: SIMD3<Float> = .zero
@@ -37,6 +38,11 @@ final class HandTrackingManager {
 
     private struct FistSnapshot {
         var isFist: Bool = false
+        var lastUpdated: TimeInterval = 0
+    }
+
+    private struct PinchSnapshot {
+        var isPinching: Bool = false
         var lastUpdated: TimeInterval = 0
     }
 
@@ -159,8 +165,15 @@ final class HandTrackingManager {
     private var rightPoseSnapshot = HandPoseSnapshot()
     private var leftFistSnapshot = FistSnapshot()
     private var rightFistSnapshot = FistSnapshot()
+    private var leftMiddlePinchSnapshot = PinchSnapshot()
+    private var rightMiddlePinchSnapshot = PinchSnapshot()
     private var isZombiePoseActive: Bool = false
     private var lastZombiePoseTime: TimeInterval = 0
+    private var isTeleportArmed: Bool = false
+    private var teleportIndicator: Entity?
+    private var teleportTargetPosition: SIMD3<Float>?
+    private var lastTeleportTapTime: TimeInterval = 0
+    private var lastTeleportIndicatorUpdateTime: TimeInterval = 0
 
     private var emberPlacement: EmberPlacementState?
     private var wallEdit: WallEditState?
@@ -577,6 +590,7 @@ final class HandTrackingManager {
                 deviceTransform: deviceTransform
             )
             let openDebug = GestureDetection.checkHandIsOpenDetailed(skeleton: skeleton)
+            let middleThumbDistance = GestureDetection.middleThumbPinchDistance(skeleton: skeleton)
             let fistDebug = GestureDetection.checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
             let isFist = fistDebug.isFist
             let palmNormal = GestureDetection.getPalmNormal(anchor: anchor, skeleton: skeleton)
@@ -654,6 +668,17 @@ final class HandTrackingManager {
                 timestamp: now
             )
             updateFistSnapshot(isLeft: isLeft, isFist: isFist, timestamp: now)
+            let didTeleportTap = updateMiddlePinchSnapshot(
+                isLeft: isLeft,
+                distance: middleThumbDistance,
+                now: now
+            )
+            if didTeleportTap {
+                handleTeleportTap(now: now, deviceTransform: deviceTransform)
+            }
+            if isTeleportArmed {
+                updateTeleportIndicator(deviceTransform: deviceTransform, now: now)
+            }
 
             let poseActive = isZombiePoseDetected(now: now)
             if poseActive {
@@ -1866,6 +1891,106 @@ final class HandTrackingManager {
                 flamethrower.move(to: transform, relativeTo: flamethrower.parent, duration: 0.2, timingFunction: .easeOut)
             }
             rightHandState.lastKnownPosition = nil
+        }
+    }
+
+    // MARK: - Teleport
+
+    private func updateMiddlePinchSnapshot(isLeft: Bool, distance: Float?, now: TimeInterval) -> Bool {
+        var snapshot = isLeft ? leftMiddlePinchSnapshot : rightMiddlePinchSnapshot
+        let wasPinching = snapshot.isPinching
+
+        if let distance = distance {
+            if snapshot.isPinching {
+                if distance > GestureConstants.teleportPinchReleaseDistance {
+                    snapshot.isPinching = false
+                }
+            } else if distance < GestureConstants.teleportPinchStartDistance {
+                snapshot.isPinching = true
+            }
+            snapshot.lastUpdated = now
+        } else {
+            snapshot.isPinching = false
+        }
+
+        if isLeft {
+            leftMiddlePinchSnapshot = snapshot
+        } else {
+            rightMiddlePinchSnapshot = snapshot
+        }
+
+        return !wasPinching && snapshot.isPinching
+    }
+
+    private func handleTeleportTap(now: TimeInterval, deviceTransform: simd_float4x4?) {
+        guard collisionMode == .thunderdome else { return }
+        guard now - lastTeleportTapTime >= GestureConstants.teleportTapCooldown else { return }
+        lastTeleportTapTime = now
+
+        if isTeleportArmed {
+            confirmTeleport(deviceTransform: deviceTransform)
+        } else {
+            beginTeleport(deviceTransform: deviceTransform, now: now)
+        }
+    }
+
+    private func beginTeleport(deviceTransform: simd_float4x4?, now: TimeInterval) {
+        isTeleportArmed = true
+        lastTeleportIndicatorUpdateTime = 0
+        let marker = ensureTeleportIndicator()
+        marker.isEnabled = true
+        updateTeleportIndicator(deviceTransform: deviceTransform, now: now, forceUpdate: true)
+    }
+
+    private func confirmTeleport(deviceTransform: simd_float4x4?) {
+        if let targetPosition = teleportTargetPosition {
+            teleportHandler?(targetPosition, deviceTransform)
+        }
+        endTeleport()
+    }
+
+    private func endTeleport() {
+        isTeleportArmed = false
+        teleportTargetPosition = nil
+        teleportIndicator?.isEnabled = false
+    }
+
+    private func ensureTeleportIndicator() -> Entity {
+        if let existing = teleportIndicator {
+            return existing
+        }
+
+        let marker = createTeleportMarker(
+            radius: GestureConstants.teleportMarkerRadius,
+            thickness: GestureConstants.teleportMarkerThickness
+        )
+        marker.isEnabled = false
+        rootEntity.addChild(marker)
+        teleportIndicator = marker
+        return marker
+    }
+
+    private func updateTeleportIndicator(
+        deviceTransform: simd_float4x4?,
+        now: TimeInterval,
+        forceUpdate: Bool = false
+    ) {
+        guard isTeleportArmed else { return }
+        guard collisionMode == .thunderdome else { return }
+        if !forceUpdate,
+           now - lastTeleportIndicatorUpdateTime < GestureConstants.teleportIndicatorUpdateInterval {
+            return
+        }
+        lastTeleportIndicatorUpdateTime = now
+
+        guard let indicator = teleportIndicator else { return }
+        if let hit = gazeGroundHit(deviceTransform: deviceTransform) {
+            indicator.isEnabled = true
+            indicator.position = hit.position + SIMD3<Float>(0, GestureConstants.teleportMarkerYOffset, 0)
+            teleportTargetPosition = hit.position
+        } else {
+            indicator.isEnabled = false
+            teleportTargetPosition = nil
         }
     }
 

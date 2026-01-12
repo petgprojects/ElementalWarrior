@@ -96,6 +96,22 @@ final class ThunderdomeManager {
         position = defaultPosition
     }
 
+    func teleport(to targetPosition: SIMD3<Float>, deviceTransform: simd_float4x4?) {
+        guard isEnvironmentReady, let deviceTransform else { return }
+
+        let devicePosition = SIMD3<Float>(
+            deviceTransform.columns.3.x,
+            deviceTransform.columns.3.y,
+            deviceTransform.columns.3.z
+        )
+        let delta = devicePosition - targetPosition
+
+        var newPosition = position
+        newPosition.x += delta.x
+        newPosition.z += delta.z
+        position = newPosition
+    }
+
     private func thunderdomeResourceURL() -> URL? {
         let bundle = Bundle.main
         if let url = bundle.url(forResource: "thunderdome_final", withExtension: "usdz") {

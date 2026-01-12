@@ -294,6 +294,18 @@ enum GestureDetection {
         )
     }
 
+    /// Distance between thumb tip and middle finger tip in hand space.
+    static func middleThumbPinchDistance(skeleton: HandSkeleton?) -> Float? {
+        guard let skeleton = skeleton else { return nil }
+        let thumbTip = skeleton.joint(.thumbTip)
+        let middleTip = skeleton.joint(.middleFingerTip)
+        guard thumbTip.isTracked, middleTip.isTracked else { return nil }
+
+        let thumbPos = extractPosition(from: thumbTip.anchorFromJointTransform)
+        let middlePos = extractPosition(from: middleTip.anchorFromJointTransform)
+        return simd_distance(thumbPos, middlePos)
+    }
+
     /// Check if palm is facing down for wall control (finger visibility not required)
     static func checkZombiePoseHand(anchor: HandAnchor, skeleton: HandSkeleton) -> Bool {
         checkPalmFacingDown(anchor: anchor, skeleton: skeleton)

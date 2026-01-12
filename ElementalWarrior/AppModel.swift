@@ -33,4 +33,10 @@ class AppModel {
     let gestureSettings = GestureSettings()
     let tutorialPlaybackManager = TutorialPlaybackManager()
     var isTutorialPreviewOpen = false
+
+    init() {
+        handTrackingManager.teleportHandler = { [weak self] targetPosition, deviceTransform in
+            self?.thunderdomeManager.teleport(to: targetPosition, deviceTransform: deviceTransform)
+        }
+    }
 }

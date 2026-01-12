@@ -24,6 +24,7 @@ class AppModel {
 
     var immersiveSpaceState = ImmersiveSpaceState.closed
     var activeImmersiveSpace: ImmersiveSpaceKind?
+    var thunderdomeImmersionStyle: ImmersionStyle = .mixed
     
     // Shared hand tracking manager for debug visibility
     let handTrackingManager = HandTrackingManager()

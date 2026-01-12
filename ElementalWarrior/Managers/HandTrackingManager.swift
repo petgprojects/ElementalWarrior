@@ -134,6 +134,8 @@ final class HandTrackingManager {
 
     // PERSISTENT mesh cache - keeps geometry even when ARKit removes anchors
     private var persistentMeshCache: [UUID: CachedMeshGeometry] = [:]
+    private var meshMinYByAnchor: [UUID: Float] = [:]
+    private var lowestMeshY: Float?
 
     // Visual mesh entities for showing scanned areas
     private var scanVisualizationEntities: [UUID: Entity] = [:]
@@ -2656,6 +2658,33 @@ final class HandTrackingManager {
         return (position, forward, right)
     }
 
+    func estimateDistanceToFloor() -> Float? {
+        guard !persistentMeshCache.isEmpty else { return nil }
+        guard let pose = getDevicePose(deviceTransform: latestDeviceTransform) else { return nil }
+        guard let meshFloorY = lowestMeshY else { return nil }
+        let distance = pose.position.y - meshFloorY
+        guard distance > 0.05 else { return nil }
+        return distance
+    }
+
+    private func updateLowestMeshY(with cached: CachedMeshGeometry) {
+        guard let minY = computeMinY(for: cached) else { return }
+        meshMinYByAnchor[cached.id] = minY
+        lowestMeshY = meshMinYByAnchor.values.min()
+    }
+
+    private func computeMinY(for cached: CachedMeshGeometry) -> Float? {
+        guard !cached.vertices.isEmpty else { return nil }
+        var minY = Float.greatestFiniteMagnitude
+        for vertex in cached.vertices {
+            let world = CollisionSystem.transformPoint(vertex, by: cached.transform)
+            if world.y < minY {
+                minY = world.y
+            }
+        }
+        return minY.isFinite ? minY : nil
+    }
+
     private func computeLineDirection(
         planeNormal: SIMD3<Float>,
         deviceForward: SIMD3<Float>,
@@ -2874,6 +2903,7 @@ final class HandTrackingManager {
 
                 let cachedGeometry = CachedMeshGeometry(from: anchor)
                 persistentMeshCache[anchor.id] = cachedGeometry
+                updateLowestMeshY(with: cachedGeometry)
 
                 updateScanStatistics()
 
@@ -2925,6 +2955,8 @@ final class HandTrackingManager {
 
     func clearScannedData() {
         persistentMeshCache.removeAll()
+        meshMinYByAnchor.removeAll()
+        lowestMeshY = nil
 
         for (_, entity) in scanVisualizationEntities {
             entity.removeFromParent()

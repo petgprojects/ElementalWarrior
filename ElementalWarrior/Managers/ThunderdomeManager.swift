@@ -11,17 +11,23 @@ import RealityKit
 @MainActor
 @Observable
 final class ThunderdomeManager {
-    static let defaultPosition = SIMD3<Float>(0, -0.5, 0)
+    private static let floorReferenceHeight: Float = 1.0 // Y=0 is 1m above the floor.
+    private static let fallbackPosition = SIMD3<Float>(0, -0.5, 0)
 
     let rootEntity = Entity()
-    var position: SIMD3<Float> = ThunderdomeManager.defaultPosition {
+    private(set) var defaultPosition = ThunderdomeManager.fallbackPosition
+    var position: SIMD3<Float> = ThunderdomeManager.fallbackPosition {
         didSet {
             rootEntity.position = position
         }
     }
     var isEnvironmentReady = false
+    var isEnvironmentLoading = false
+    var isAwaitingFloorLook = false
 
     private var hasLoaded = false
+    private var hasAppliedInitialHeight = false
+    private var isCalibratingHeight = false
 
     init() {
         rootEntity.name = "ThunderdomeRoot"
@@ -32,6 +38,8 @@ final class ThunderdomeManager {
         guard !hasLoaded else { return }
         hasLoaded = true
         isEnvironmentReady = false
+        isEnvironmentLoading = true
+        defer { isEnvironmentLoading = false }
 
         guard let url = thunderdomeResourceURL() else {
             hasLoaded = false
@@ -53,8 +61,38 @@ final class ThunderdomeManager {
         }
     }
 
+    func applyInitialUserHeight(using handTrackingManager: HandTrackingManager) async {
+        guard !hasAppliedInitialHeight, !isCalibratingHeight else { return }
+        isCalibratingHeight = true
+        defer {
+            isCalibratingHeight = false
+            if Task.isCancelled {
+                isAwaitingFloorLook = false
+            }
+        }
+
+        var didShowPrompt = false
+        while !Task.isCancelled {
+            if let distance = handTrackingManager.estimateDistanceToFloor() {
+                isAwaitingFloorLook = false
+                var newPosition = position
+                newPosition.y = ThunderdomeManager.floorReferenceHeight - distance
+                print(String(format: "[Thunderdome] Detected user height: %.2f m (start Y: %.2f)", distance, newPosition.y))
+                position = newPosition
+                defaultPosition = newPosition
+                hasAppliedInitialHeight = true
+                return
+            }
+            if !didShowPrompt {
+                isAwaitingFloorLook = true
+                didShowPrompt = true
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
     func resetPosition() {
-        position = ThunderdomeManager.defaultPosition
+        position = defaultPosition
     }
 
     private func thunderdomeResourceURL() -> URL? {

@@ -57,6 +57,12 @@ struct ElementalWarriorApp: App {
             ThunderdomeImmersiveView()
                 .environment(appModel)
         }
-        .immersionStyle(selection: .constant(.full), in: .full)
+        .immersionStyle(
+            selection: Binding(
+                get: { appModel.thunderdomeImmersionStyle },
+                set: { appModel.thunderdomeImmersionStyle = $0 }
+            ),
+            in: .mixed, .full
+        )
     }
 }

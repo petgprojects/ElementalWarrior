@@ -107,9 +107,9 @@ enum GestureDetection {
         let debugInfo = "\(fistSignals)/4: " + debugParts.joined(separator: " | ")
 
         let shouldLog = Int.random(in: 0..<30) == 0
-        if shouldLog || isFist {
-            print("[FIST \(isLeft ? "L" : "R")] signals=\(fistSignals)/\(requiredSignals) -> \(isFist ? "FIST" : "open") | \(debugInfo)")
-        }
+        // if shouldLog || isFist {
+        //     print("[FIST \(isLeft ? "L" : "R")] signals=\(fistSignals)/\(requiredSignals) -> \(isFist ? "FIST" : "open") | \(debugInfo)")
+        // }
 
         return FistDebugResult(
             hasSkeleton: true,

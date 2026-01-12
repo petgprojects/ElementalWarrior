@@ -78,7 +78,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 - **Environment Expansion**
   - **Current**: Passthrough mixed reality mode
-  - **Current**: Thunderdome immersive arena (Reality Composer Pro USDZ) with environment collision
+  - **Current**: Thunderdome immersive arena (Reality Composer Pro USDZ) with passthrough height calibration before loading
   - **Planned**: Themed battle arenas (fire temple, water oasis, earth cavern, air temple)
 
 - **Progression System**

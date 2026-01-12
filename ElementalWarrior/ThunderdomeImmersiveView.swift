@@ -11,34 +11,58 @@ import RealityKit
 struct ThunderdomeImmersiveView: View {
     @Environment(AppModel.self) private var appModel
     @State private var loadingAnchor = AnchorEntity(.head)
+    @State private var promptAnchor = AnchorEntity(.head)
 
     var body: some View {
         RealityView { content, attachments in
             content.add(appModel.thunderdomeManager.rootEntity)
             content.add(appModel.handTrackingManager.rootEntity)
             content.add(loadingAnchor)
+            content.add(promptAnchor)
 
-            if !appModel.thunderdomeManager.isEnvironmentReady,
+            if appModel.thunderdomeManager.isEnvironmentLoading,
                let loadingEntity = attachments.entity(for: "loading") {
                 placeLoadingEntity(loadingEntity)
             }
+            if appModel.thunderdomeManager.isAwaitingFloorLook,
+               let promptEntity = attachments.entity(for: "floorPrompt") {
+                placeFloorPromptEntity(promptEntity)
+            }
         } update: { _, attachments in
-            guard let loadingEntity = attachments.entity(for: "loading") else { return }
-            if appModel.thunderdomeManager.isEnvironmentReady {
-                loadingEntity.removeFromParent()
-            } else if loadingEntity.parent == nil {
-                placeLoadingEntity(loadingEntity)
+            if let loadingEntity = attachments.entity(for: "loading") {
+                if appModel.thunderdomeManager.isEnvironmentLoading {
+                    if loadingEntity.parent == nil {
+                        placeLoadingEntity(loadingEntity)
+                    }
+                } else if loadingEntity.parent != nil {
+                    loadingEntity.removeFromParent()
+                }
+            }
+            if let promptEntity = attachments.entity(for: "floorPrompt") {
+                if appModel.thunderdomeManager.isAwaitingFloorLook {
+                    if promptEntity.parent == nil {
+                        placeFloorPromptEntity(promptEntity)
+                    }
+                } else if promptEntity.parent != nil {
+                    promptEntity.removeFromParent()
+                }
             }
         } attachments: {
             Attachment(id: "loading") {
                 LoadingOverlay()
             }
+            Attachment(id: "floorPrompt") {
+                FloorPromptOverlay()
+            }
         }
         .task {
+            appModel.thunderdomeImmersionStyle = .mixed
             appModel.handTrackingManager.collisionMode = .none
+            await appModel.thunderdomeManager.applyInitialUserHeight(using: appModel.handTrackingManager)
             await appModel.thunderdomeManager.loadEnvironment()
             if appModel.thunderdomeManager.isEnvironmentReady {
                 appModel.handTrackingManager.collisionMode = .thunderdome
+                appModel.thunderdomeImmersionStyle = .full
             }
         }
         .task {
@@ -49,6 +73,11 @@ struct ThunderdomeImmersiveView: View {
     private func placeLoadingEntity(_ entity: Entity) {
         entity.position = SIMD3<Float>(0, -0.1, -0.8)
         loadingAnchor.addChild(entity)
+    }
+
+    private func placeFloorPromptEntity(_ entity: Entity) {
+        entity.position = SIMD3<Float>(0, -0.25, -0.8)
+        promptAnchor.addChild(entity)
     }
 }
 
@@ -62,6 +91,21 @@ private struct LoadingOverlay: View {
         }
         .padding(24)
         .frame(width: 260)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .glassBackgroundEffect()
+    }
+}
+
+private struct FloorPromptOverlay: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("Look down at the floor to calibrate height.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+        }
+        .padding(20)
+        .frame(width: 280)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
         .glassBackgroundEffect()
     }

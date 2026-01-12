@@ -81,6 +81,9 @@ struct HomeView: View {
 
     private func openTargetImmersiveSpace(_ kind: AppModel.ImmersiveSpaceKind) async {
         appModel.immersiveSpaceState = .inTransition
+        if kind == .thunderdome {
+            appModel.thunderdomeImmersionStyle = .mixed
+        }
         let result = await openImmersiveSpace(id: kind.rawValue)
         if result == .opened {
             appModel.immersiveSpaceState = .open

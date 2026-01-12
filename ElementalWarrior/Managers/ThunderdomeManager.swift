@@ -11,7 +11,7 @@ import RealityKit
 @MainActor
 @Observable
 final class ThunderdomeManager {
-    static let defaultPosition = SIMD3<Float>(0, 2, 0)
+    static let defaultPosition = SIMD3<Float>(0, -0.5, 0)
 
     let rootEntity = Entity()
     var position: SIMD3<Float> = ThunderdomeManager.defaultPosition {

@@ -1,5 +1,9 @@
 # Elemental Warrior Copilot Instructions
 
+## Context7 MCP (Required)
+- Always use the Context7 MCP when you need library/API documentation, code generation, setup steps, or configuration guidance (e.g., Swift/ARKit/RealityKit APIs, VisionOS behaviors, Xcode settings, package usage) without the user having to explicitly ask.
+- Use `resolve-library-id` first, then `get-library-docs`, and prefer Context7 output over guesses or stale knowledge.
+
 ## Source of Truth
 - Use `README.md` as the authoritative description of the current feature set and architecture. Keep changes in this file aligned with it.
 

@@ -19,6 +19,16 @@ import UIKit
 final class HandTrackingManager {
     let rootEntity = Entity()
 
+    enum CollisionMode {
+        case none
+        case sceneReconstruction
+        case thunderdome
+    }
+
+    var collisionMode: CollisionMode = .sceneReconstruction
+    var latestDeviceTransform: simd_float4x4?
+    var teleportHandler: ((SIMD3<Float>, simd_float4x4?) -> Void)?
+
     private struct HandPoseSnapshot {
         var palmPosition: SIMD3<Float> = .zero
         var palmNormal: SIMD3<Float> = .zero
@@ -28,6 +38,11 @@ final class HandTrackingManager {
 
     private struct FistSnapshot {
         var isFist: Bool = false
+        var lastUpdated: TimeInterval = 0
+    }
+
+    private struct PinchSnapshot {
+        var isPinching: Bool = false
         var lastUpdated: TimeInterval = 0
     }
 
@@ -125,6 +140,8 @@ final class HandTrackingManager {
 
     // PERSISTENT mesh cache - keeps geometry even when ARKit removes anchors
     private var persistentMeshCache: [UUID: CachedMeshGeometry] = [:]
+    private var meshMinYByAnchor: [UUID: Float] = [:]
+    private var lowestMeshY: Float?
 
     // Visual mesh entities for showing scanned areas
     private var scanVisualizationEntities: [UUID: Entity] = [:]
@@ -148,8 +165,18 @@ final class HandTrackingManager {
     private var rightPoseSnapshot = HandPoseSnapshot()
     private var leftFistSnapshot = FistSnapshot()
     private var rightFistSnapshot = FistSnapshot()
+    private var leftMiddlePinchSnapshot = PinchSnapshot()
+    private var rightMiddlePinchSnapshot = PinchSnapshot()
     private var isZombiePoseActive: Bool = false
     private var lastZombiePoseTime: TimeInterval = 0
+    private var isTeleportArmed: Bool = false
+    private var teleportIndicator: Entity?
+    private var teleportTargetPosition: SIMD3<Float>?
+    private var teleportControlHand: HandAnchor.Chirality?
+    private var teleportBaseGazePosition: SIMD3<Float>?
+    private var teleportBaseHandPosition: SIMD3<Float>?
+    private var lastTeleportTapTime: TimeInterval = 0
+    private var lastTeleportIndicatorUpdateTime: TimeInterval = 0
 
     private var emberPlacement: EmberPlacementState?
     private var wallEdit: WallEditState?
@@ -557,14 +584,16 @@ final class HandTrackingManager {
 
             let skeleton = anchor.handSkeleton
             let deviceTransform = worldTracking.queryDeviceAnchor(atTimestamp: now)?.originFromAnchorTransform
+            latestDeviceTransform = deviceTransform
 
-            let shouldShowFireball = GestureDetection.checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
-            let shouldUseFlamethrower = GestureDetection.checkShouldFireFlamethrower(
+            var shouldShowFireball = GestureDetection.checkShouldShowFireball(anchor: anchor, skeleton: skeleton)
+            var shouldUseFlamethrower = GestureDetection.checkShouldFireFlamethrower(
                 anchor: anchor,
                 skeleton: skeleton,
                 deviceTransform: deviceTransform
             )
             let openDebug = GestureDetection.checkHandIsOpenDetailed(skeleton: skeleton)
+            let middleThumbDistance = GestureDetection.middleThumbPinchDistance(skeleton: skeleton)
             let fistDebug = GestureDetection.checkHandIsFist(skeleton: skeleton, isLeft: isLeft)
             let isFist = fistDebug.isFist
             let palmNormal = GestureDetection.getPalmNormal(anchor: anchor, skeleton: skeleton)
@@ -586,6 +615,57 @@ final class HandTrackingManager {
             let distInfo2 = distToRightFireball.map { "toR:\(String(format: "%.2f", $0))m" } ?? ""
             let distString = [distInfo, distInfo2].filter { !$0.isEmpty }.joined(separator: " ")
             let hasSkeleton = skeleton != nil
+
+            let hasLeftFireball = leftHandState.fireball != nil
+            let hasRightFireball = rightHandState.fireball != nil
+            if (hasLeftFireball || hasRightFireball) && Int.random(in: 0..<60) == 0 {
+                print("[HAND UPDATE] \(isLeft ? "LEFT" : "RIGHT") - isFist=\(isFist), hasLeftFB=\(hasLeftFireball), hasRightFB=\(hasRightFireball), leftPending=\(leftHandState.isPendingDespawn), rightPending=\(rightHandState.isPendingDespawn)")
+            }
+
+            let palmPosition = GestureDetection.getPalmPosition(anchor: anchor, skeleton: skeleton)
+            let fistPosition = GestureDetection.getFistPosition(anchor: anchor, skeleton: skeleton)
+
+            let previousPalmNormal = isLeft ? leftPoseSnapshot.palmNormal : rightPoseSnapshot.palmNormal
+            let resolvedPalmNormal = palmNormal ?? (simd_length(previousPalmNormal) > 0.001 ? previousPalmNormal : nil)
+            let zombieDebug = checkZombiePoseHand(
+                palmNormal: resolvedPalmNormal,
+                palmPosition: palmPosition,
+                isFist: isFist,
+                deviceTransform: deviceTransform
+            )
+            let isZombiePoseHand = zombieDebug.isZombiePose
+
+            updatePoseSnapshot(
+                isLeft: isLeft,
+                palmPosition: palmPosition,
+                palmNormal: resolvedPalmNormal ?? .zero,
+                isZombiePose: isZombiePoseHand,
+                timestamp: now
+            )
+            updateFistSnapshot(isLeft: isLeft, isFist: isFist, timestamp: now)
+            let didTeleportTap = updateMiddlePinchSnapshot(
+                isLeft: isLeft,
+                distance: middleThumbDistance,
+                now: now
+            )
+            if didTeleportTap {
+                handleTeleportTap(
+                    hand: isLeft ? .left : .right,
+                    handPosition: palmPosition,
+                    now: now,
+                    deviceTransform: deviceTransform
+                )
+            }
+            if isTeleportArmed {
+                updateTeleportIndicator(deviceTransform: deviceTransform, now: now)
+            }
+
+            let isLocomotionHand = isHandInLocomotion(isLeft: isLeft)
+            if isLocomotionHand {
+                shouldShowFireball = false
+                shouldUseFlamethrower = false
+            }
+            let isFistForActions = isLocomotionHand ? false : isFist
 
             if isLeft {
                 if isCollidingWithFireball {
@@ -615,34 +695,6 @@ final class HandTrackingManager {
                 rightDebugInfo = "skel:\(hasSkeleton ? "✓" : "✗") \(distString)\n\(fistDebug.summary)"
             }
 
-            let hasLeftFireball = leftHandState.fireball != nil
-            let hasRightFireball = rightHandState.fireball != nil
-            if (hasLeftFireball || hasRightFireball) && Int.random(in: 0..<60) == 0 {
-                print("[HAND UPDATE] \(isLeft ? "LEFT" : "RIGHT") - isFist=\(isFist), hasLeftFB=\(hasLeftFireball), hasRightFB=\(hasRightFireball), leftPending=\(leftHandState.isPendingDespawn), rightPending=\(rightHandState.isPendingDespawn)")
-            }
-
-            let palmPosition = GestureDetection.getPalmPosition(anchor: anchor, skeleton: skeleton)
-            let fistPosition = GestureDetection.getFistPosition(anchor: anchor, skeleton: skeleton)
-
-            let previousPalmNormal = isLeft ? leftPoseSnapshot.palmNormal : rightPoseSnapshot.palmNormal
-            let resolvedPalmNormal = palmNormal ?? (simd_length(previousPalmNormal) > 0.001 ? previousPalmNormal : nil)
-            let zombieDebug = checkZombiePoseHand(
-                palmNormal: resolvedPalmNormal,
-                palmPosition: palmPosition,
-                isFist: isFist,
-                deviceTransform: deviceTransform
-            )
-            let isZombiePoseHand = zombieDebug.isZombiePose
-
-            updatePoseSnapshot(
-                isLeft: isLeft,
-                palmPosition: palmPosition,
-                palmNormal: resolvedPalmNormal ?? .zero,
-                isZombiePose: isZombiePoseHand,
-                timestamp: now
-            )
-            updateFistSnapshot(isLeft: isLeft, isFist: isFist, timestamp: now)
-
             let poseActive = isZombiePoseDetected(now: now)
             if poseActive {
                 lastZombiePoseTime = now
@@ -667,7 +719,7 @@ final class HandTrackingManager {
                     position: palmPosition,
                     palmNormal: palmNormal,
                     fistPosition: fistPosition,
-                    isFist: isFist,
+                    isFist: isFistForActions,
                     anchor: anchor
                 )
             } else {
@@ -678,7 +730,7 @@ final class HandTrackingManager {
                     position: palmPosition,
                     palmNormal: palmNormal,
                     fistPosition: fistPosition,
-                    isFist: isFist,
+                    isFist: isFistForActions,
                     anchor: anchor
                 )
             }
@@ -1075,11 +1127,10 @@ final class HandTrackingManager {
         let avgScorchTime = max(leftHandState.lastFlamethrowerScorchTime, rightHandState.lastFlamethrowerScorchTime)
         if now - avgScorchTime > GestureConstants.flamethrowerScorchCooldown {
             // Raycast from combined position
-            if let hit = CollisionSystem.raycastBeam(
+            if let hit = raycastBeam(
                 origin: midpoint + avgDirection * 0.02,
                 direction: avgDirection,
-                maxDistance: GestureConstants.flamethrowerRange,
-                meshCache: persistentMeshCache
+                maxDistance: GestureConstants.flamethrowerRange
             ) {
                 leftHandState.lastFlamethrowerScorchTime = now
                 rightHandState.lastFlamethrowerScorchTime = now
@@ -1394,6 +1445,80 @@ final class HandTrackingManager {
 
     // MARK: - Flamethrower
 
+    private func adjustThunderdomeHit(
+        _ hit: CollisionSystem.HitResult,
+        direction: SIMD3<Float>
+    ) -> CollisionSystem.HitResult {
+        let dirLength = simd_length(direction)
+        guard dirLength > 0.0001 else { return hit }
+        let normalizedDirection = direction / dirLength
+
+        var normal = hit.normal
+
+        if simd_dot(normal, normalizedDirection) > 0 {
+            normal = -normal
+        }
+
+        return CollisionSystem.HitResult(position: hit.position, normal: normal)
+    }
+
+    private func raycastBeam(
+        origin: SIMD3<Float>,
+        direction: SIMD3<Float>,
+        maxDistance: Float
+    ) -> CollisionSystem.HitResult? {
+        switch collisionMode {
+        case .none:
+            return nil
+        case .sceneReconstruction:
+            return CollisionSystem.raycastBeam(
+                origin: origin,
+                direction: direction,
+                maxDistance: maxDistance,
+                meshCache: persistentMeshCache
+            )
+        case .thunderdome:
+            guard let scene = rootEntity.scene else { return nil }
+            guard let hit = CollisionSystem.raycastScene(
+                scene: scene,
+                origin: origin,
+                direction: direction,
+                maxDistance: maxDistance,
+                mask: CollisionGroups.thunderdome,
+                minDistance: 0.02
+            ) else { return nil }
+            return adjustThunderdomeHit(hit, direction: direction)
+        }
+    }
+
+    private func raycastProjectile(
+        from previousPosition: SIMD3<Float>,
+        to newPosition: SIMD3<Float>,
+        direction: SIMD3<Float>
+    ) -> CollisionSystem.HitResult? {
+        switch collisionMode {
+        case .none:
+            return nil
+        case .sceneReconstruction:
+            return CollisionSystem.checkProjectileCollision(
+                projectilePosition: newPosition,
+                direction: direction,
+                previousPosition: previousPosition,
+                meshCache: persistentMeshCache
+            )
+        case .thunderdome:
+            guard let scene = rootEntity.scene else { return nil }
+            guard let hit = CollisionSystem.raycastScene(
+                scene: scene,
+                from: previousPosition,
+                to: newPosition,
+                mask: CollisionGroups.thunderdome,
+                minDistance: 0.0
+            ) else { return nil }
+            return adjustThunderdomeHit(hit, direction: direction)
+        }
+    }
+
     private func updateFlamethrower(
         for hand: HandAnchor.Chirality,
         position: SIMD3<Float>,
@@ -1443,12 +1568,7 @@ final class HandTrackingManager {
 
         // Limit expensive mesh raycasts to reduce main-actor load
         if now - state.lastFlamethrowerRaycastTime > GestureConstants.flamethrowerRaycastInterval {
-            hit = CollisionSystem.raycastBeam(
-                origin: origin,
-                direction: direction,
-                maxDistance: maxRange,
-                meshCache: persistentMeshCache
-            )
+            hit = raycastBeam(origin: origin, direction: direction, maxDistance: maxRange)
             state.lastFlamethrowerRaycastTime = now
             state.lastFlamethrowerHitDistance = hit.map { simd_distance(origin, $0.position) } ?? maxRange
         } else {
@@ -1805,6 +1925,191 @@ final class HandTrackingManager {
                 flamethrower.move(to: transform, relativeTo: flamethrower.parent, duration: 0.2, timingFunction: .easeOut)
             }
             rightHandState.lastKnownPosition = nil
+        }
+    }
+
+    // MARK: - Teleport
+
+    private func updateMiddlePinchSnapshot(isLeft: Bool, distance: Float?, now: TimeInterval) -> Bool {
+        var snapshot = isLeft ? leftMiddlePinchSnapshot : rightMiddlePinchSnapshot
+        let wasPinching = snapshot.isPinching
+
+        if let distance = distance {
+            if snapshot.isPinching {
+                if distance > GestureConstants.teleportPinchReleaseDistance {
+                    snapshot.isPinching = false
+                }
+            } else if distance < GestureConstants.teleportPinchStartDistance {
+                snapshot.isPinching = true
+            }
+            snapshot.lastUpdated = now
+        } else {
+            snapshot.isPinching = false
+        }
+
+        if isLeft {
+            leftMiddlePinchSnapshot = snapshot
+        } else {
+            rightMiddlePinchSnapshot = snapshot
+        }
+
+        return !wasPinching && snapshot.isPinching
+    }
+
+    private func handleTeleportTap(
+        hand: HandAnchor.Chirality,
+        handPosition: SIMD3<Float>,
+        now: TimeInterval,
+        deviceTransform: simd_float4x4?
+    ) {
+        guard collisionMode == .thunderdome else { return }
+        guard now - lastTeleportTapTime >= GestureConstants.teleportTapCooldown else { return }
+        lastTeleportTapTime = now
+
+        if isTeleportArmed {
+            confirmTeleport(deviceTransform: deviceTransform)
+        } else {
+            beginTeleport(hand: hand, handPosition: handPosition, deviceTransform: deviceTransform, now: now)
+        }
+    }
+
+    private func beginTeleport(
+        hand: HandAnchor.Chirality,
+        handPosition: SIMD3<Float>,
+        deviceTransform: simd_float4x4?,
+        now: TimeInterval
+    ) {
+        isTeleportArmed = true
+        teleportControlHand = hand
+        teleportBaseHandPosition = handPosition
+        teleportBaseGazePosition = gazeGroundHit(
+            deviceTransform: deviceTransform,
+            maxDistance: GestureConstants.teleportMaxDistance
+        )?.position
+        lastTeleportIndicatorUpdateTime = 0
+        let marker = ensureTeleportIndicator()
+        marker.isEnabled = true
+        Task {
+            await suppressEffectsForLocomotion(hand: hand)
+        }
+        updateTeleportIndicator(deviceTransform: deviceTransform, now: now, forceUpdate: true)
+    }
+
+    private func confirmTeleport(deviceTransform: simd_float4x4?) {
+        if let targetPosition = teleportTargetPosition {
+            teleportHandler?(targetPosition, deviceTransform)
+        }
+        endTeleport()
+    }
+
+    private func endTeleport() {
+        isTeleportArmed = false
+        teleportTargetPosition = nil
+        teleportControlHand = nil
+        teleportBaseGazePosition = nil
+        teleportBaseHandPosition = nil
+        teleportIndicator?.isEnabled = false
+    }
+
+    private func ensureTeleportIndicator() -> Entity {
+        if let existing = teleportIndicator {
+            return existing
+        }
+
+        let marker = createTeleportMarker(
+            radius: GestureConstants.teleportMarkerRadius,
+            thickness: GestureConstants.teleportMarkerThickness
+        )
+        marker.isEnabled = false
+        rootEntity.addChild(marker)
+        teleportIndicator = marker
+        return marker
+    }
+
+    private func updateTeleportIndicator(
+        deviceTransform: simd_float4x4?,
+        now: TimeInterval,
+        forceUpdate: Bool = false
+    ) {
+        guard isTeleportArmed else { return }
+        guard collisionMode == .thunderdome else { return }
+        if !forceUpdate,
+           now - lastTeleportIndicatorUpdateTime < GestureConstants.teleportIndicatorUpdateInterval {
+            return
+        }
+        lastTeleportIndicatorUpdateTime = now
+
+        guard let indicator = teleportIndicator else { return }
+        guard let hit = gazeGroundHit(
+            deviceTransform: deviceTransform,
+            maxDistance: GestureConstants.teleportMaxDistance
+        ) else {
+            indicator.isEnabled = false
+            teleportTargetPosition = nil
+            return
+        }
+
+        var gazePosition = hit.position
+        if let baseGaze = teleportBaseGazePosition {
+            if simd_distance(baseGaze, gazePosition) > GestureConstants.teleportGazeResetDistance {
+                teleportBaseGazePosition = gazePosition
+                teleportBaseHandPosition = currentTeleportHandPosition(now: now)
+            } else {
+                gazePosition = baseGaze
+            }
+        } else {
+            teleportBaseGazePosition = gazePosition
+            teleportBaseHandPosition = currentTeleportHandPosition(now: now)
+        }
+
+        let baseGaze = teleportBaseGazePosition ?? gazePosition
+        var handOffset = SIMD3<Float>.zero
+        if let baseHand = teleportBaseHandPosition,
+           let currentHand = currentTeleportHandPosition(now: now) {
+            let delta = currentHand - baseHand
+            let worldUp = SIMD3<Float>(0, 1, 0)
+            let planeDelta = delta - worldUp * simd_dot(delta, worldUp)
+            handOffset = planeDelta * GestureConstants.teleportHandMoveScale
+        }
+
+        let targetPosition = baseGaze + handOffset
+        indicator.isEnabled = true
+        indicator.position = targetPosition + SIMD3<Float>(0, GestureConstants.teleportMarkerYOffset, 0)
+        teleportTargetPosition = targetPosition
+    }
+
+    private func isHandInLocomotion(isLeft: Bool) -> Bool {
+        guard isTeleportArmed, let controlHand = teleportControlHand else { return false }
+        return controlHand == (isLeft ? .left : .right)
+    }
+
+    private func currentTeleportHandPosition(now: TimeInterval) -> SIMD3<Float>? {
+        guard let controlHand = teleportControlHand else { return nil }
+        switch controlHand {
+        case .left:
+            guard now - leftPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow else { return nil }
+            return leftPoseSnapshot.palmPosition
+        case .right:
+            guard now - rightPoseSnapshot.lastUpdated < GestureConstants.zombiePoseUpdateWindow else { return nil }
+            return rightPoseSnapshot.palmPosition
+        @unknown default:
+            return nil
+        }
+    }
+
+    private func suppressEffectsForLocomotion(hand: HandAnchor.Chirality) async {
+        await stopFlamethrower(for: hand)
+        switch hand {
+        case .left:
+            if leftHandState.fireball != nil {
+                await extinguishLeft()
+            }
+        case .right:
+            if rightHandState.fireball != nil {
+                await extinguishRight()
+            }
+        @unknown default:
+            break
         }
     }
 
@@ -2558,13 +2863,15 @@ final class HandTrackingManager {
         return closestID
     }
 
-    private func gazeGroundHit(deviceTransform: simd_float4x4?) -> CollisionSystem.HitResult? {
+    private func gazeGroundHit(
+        deviceTransform: simd_float4x4?,
+        maxDistance: Float = GestureConstants.wallPlacementMaxDistance
+    ) -> CollisionSystem.HitResult? {
         guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return nil }
-        guard let hit = CollisionSystem.raycastBeam(
+        guard let hit = raycastBeam(
             origin: pose.position,
             direction: pose.forward,
-            maxDistance: GestureConstants.wallPlacementMaxDistance,
-            meshCache: persistentMeshCache
+            maxDistance: maxDistance
         ) else {
             return nil
         }
@@ -2596,6 +2903,33 @@ final class HandTrackingManager {
             deviceTransform.columns.0.z
         ))
         return (position, forward, right)
+    }
+
+    func estimateDistanceToFloor() -> Float? {
+        guard !persistentMeshCache.isEmpty else { return nil }
+        guard let pose = getDevicePose(deviceTransform: latestDeviceTransform) else { return nil }
+        guard let meshFloorY = lowestMeshY else { return nil }
+        let distance = pose.position.y - meshFloorY
+        guard distance > 0.05 else { return nil }
+        return distance
+    }
+
+    private func updateLowestMeshY(with cached: CachedMeshGeometry) {
+        guard let minY = computeMinY(for: cached) else { return }
+        meshMinYByAnchor[cached.id] = minY
+        lowestMeshY = meshMinYByAnchor.values.min()
+    }
+
+    private func computeMinY(for cached: CachedMeshGeometry) -> Float? {
+        guard !cached.vertices.isEmpty else { return nil }
+        var minY = Float.greatestFiniteMagnitude
+        for vertex in cached.vertices {
+            let world = CollisionSystem.transformPoint(vertex, by: cached.transform)
+            if world.y < minY {
+                minY = world.y
+            }
+        }
+        return minY.isFinite ? minY : nil
     }
 
     private func computeLineDirection(
@@ -2773,15 +3107,15 @@ final class HandTrackingManager {
 
                 let newPosition = projectile.startPosition + projectile.direction * travelDistance
 
-                if let hit = CollisionSystem.checkProjectileCollision(
-                    projectilePosition: newPosition,
-                    direction: projectile.direction,
-                    previousPosition: projectile.previousPosition,
-                    meshCache: persistentMeshCache
+                if let hit = raycastProjectile(
+                    from: projectile.previousPosition,
+                    to: newPosition,
+                    direction: projectile.direction
                 ) {
                     await triggerExplosion(at: hit.position, normal: hit.normal, projectileID: id, isMega: projectile.isMegaFireball)
                     projectilesToRemove.append(id)
-                    print("\(projectile.isMegaFireball ? "MEGA " : "")Fireball hit real-world surface at \(hit.position)")
+                    let surfaceLabel = collisionMode == .thunderdome ? "environment" : "real-world"
+                    print("\(projectile.isMegaFireball ? "MEGA " : "")Fireball hit \(surfaceLabel) surface at \(hit.position)")
                     continue
                 }
 
@@ -2816,6 +3150,7 @@ final class HandTrackingManager {
 
                 let cachedGeometry = CachedMeshGeometry(from: anchor)
                 persistentMeshCache[anchor.id] = cachedGeometry
+                updateLowestMeshY(with: cachedGeometry)
 
                 updateScanStatistics()
 
@@ -2867,6 +3202,8 @@ final class HandTrackingManager {
 
     func clearScannedData() {
         persistentMeshCache.removeAll()
+        meshMinYByAnchor.removeAll()
+        lowestMeshY = nil
 
         for (_, entity) in scanVisualizationEntities {
             entity.removeFromParent()
@@ -3006,7 +3343,7 @@ final class HandTrackingManager {
             let shape = try await ShapeResource.generateStaticMesh(from: anchor)
             var collision = CollisionComponent(shapes: [shape])
             collision.filter = CollisionFilter(
-                group: CollisionGroup(rawValue: 1 << 1),
+                group: CollisionGroups.sceneMesh,
                 mask: CollisionGroup(rawValue: 1 << 0)
             )
             entity.components.set(collision)

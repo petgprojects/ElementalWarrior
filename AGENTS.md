@@ -34,6 +34,9 @@
 - When behavior or architecture changes, update `README.md` to match (see `CLAUDE.md`).
 - Hand/world sensing permissions live in `ElementalWarrior/Info.plist`; update entries when adding new providers.
 
+## Agent Tooling
+- Always use Context7 when possible for library/framework documentation and examples.
+
 ## Agent Build Requirement
 - Always run the build after any code or asset change, and treat failures as blockers.
 - Command: `xcodebuild -project ElementalWarrior.xcodeproj -scheme ElementalWarrior -destination 'platform=visionOS Simulator,name=Apple Vision Pro' | grep -A 5 -B 5 "BUILD"`

@@ -134,6 +134,7 @@ enum GestureConstants {
     static var zombiePoseUpdateWindow: TimeInterval = 0.25    // seconds between both hand updates
     static var wallControlGraceDuration: TimeInterval = 0.25  // seconds of grace for pose flicker
     static var wallConfirmHoldDuration: TimeInterval = 0.12   // seconds of both fists to confirm/cancel
+    static var wallRearmCooldownDuration: TimeInterval = 1.2  // seconds after confirm before new wall placement
     static var wallPlacementMinWidth: Float = 0.4             // meters minimum wall width
     static var wallPlacementMaxWidth: Float = 3.5             // meters maximum wall width
     static var wallPlacementSmoothing: Float = 0.25           // smoothing factor for ember line updates

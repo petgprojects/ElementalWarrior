@@ -357,6 +357,7 @@ private struct WallOfFireOptionsView: View {
             OptionSliderRow(title: "Pose update window", value: $settings.zombiePoseUpdateWindow, range: 0.05...1.0, step: 0.05, format: "%.2f", unit: "s")
             OptionSliderRow(title: "Control grace", value: $settings.wallControlGraceDuration, range: 0.0...1.0, step: 0.05, format: "%.2f", unit: "s")
             OptionSliderRow(title: "Confirm hold", value: $settings.wallConfirmHoldDuration, range: 0.05...1.0, step: 0.05, format: "%.2f", unit: "s")
+            OptionSliderRow(title: "Rearm delay", value: $settings.wallRearmCooldownDuration, range: 0.2...2.0, step: 0.05, format: "%.2f", unit: "s")
             OptionSliderRow(title: "Min width", value: $settings.wallPlacementMinWidth, range: 0.2...1.5, step: 0.05, format: "%.2f", unit: "m")
             OptionSliderRow(title: "Max width", value: $settings.wallPlacementMaxWidth, range: 1.0...6.0, step: 0.1, format: "%.2f", unit: "m")
             OptionSliderRow(title: "Placement smoothing", value: $settings.wallPlacementSmoothing, range: 0.0...1.0, step: 0.05, format: "%.2f", unit: "")

@@ -169,6 +169,7 @@ final class HandTrackingManager {
     private var rightMiddlePinchSnapshot = PinchSnapshot()
     private var isZombiePoseActive: Bool = false
     private var lastZombiePoseTime: TimeInterval = 0
+    private var lastWallConfirmTime: TimeInterval = -Double.greatestFiniteMagnitude
     private var isTeleportArmed: Bool = false
     private var teleportIndicator: Entity?
     private var teleportTargetPosition: SIMD3<Float>?
@@ -2277,12 +2278,14 @@ final class HandTrackingManager {
 
         if didConfirm {
             if let placement = emberPlacement {
+                lastWallConfirmTime = now
                 await fadeOutEmberPlacement(placement)
                 emberPlacement = nil
                 clearWallSelection(resetPalette: wallEdit == nil)
                 return
             }
             if wallEdit != nil {
+                lastWallConfirmTime = now
                 await confirmWallEdit()
                 return
             }
@@ -2307,6 +2310,13 @@ final class HandTrackingManager {
         }
 
         guard poseAllowed else {
+            if !isHoldingFists {
+                clearWallSelection(resetPalette: true)
+            }
+            return
+        }
+
+        if now - lastWallConfirmTime < GestureConstants.wallRearmCooldownDuration {
             if !isHoldingFists {
                 clearWallSelection(resetPalette: true)
             }

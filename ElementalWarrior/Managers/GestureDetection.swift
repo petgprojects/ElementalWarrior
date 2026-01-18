@@ -107,9 +107,9 @@ enum GestureDetection {
         let debugInfo = "\(fistSignals)/4: " + debugParts.joined(separator: " | ")
 
         let shouldLog = Int.random(in: 0..<30) == 0
-        // if shouldLog || isFist {
-        //     print("[FIST \(isLeft ? "L" : "R")] signals=\(fistSignals)/\(requiredSignals) -> \(isFist ? "FIST" : "open") | \(debugInfo)")
-        // }
+        if shouldLog || isFist {
+            print("[FIST \(isLeft ? "L" : "R")] signals=\(fistSignals)/\(requiredSignals) -> \(isFist ? "FIST" : "open") | \(debugInfo)")
+        }
 
         return FistDebugResult(
             hasSkeleton: true,
@@ -292,18 +292,6 @@ enum GestureDetection {
             indexExtension: indexExtension,
             threshold: openHandExtensionThreshold
         )
-    }
-
-    /// Distance between thumb tip and middle finger tip in hand space.
-    static func middleThumbPinchDistance(skeleton: HandSkeleton?) -> Float? {
-        guard let skeleton = skeleton else { return nil }
-        let thumbTip = skeleton.joint(.thumbTip)
-        let middleTip = skeleton.joint(.middleFingerTip)
-        guard thumbTip.isTracked, middleTip.isTracked else { return nil }
-
-        let thumbPos = extractPosition(from: thumbTip.anchorFromJointTransform)
-        let middlePos = extractPosition(from: middleTip.anchorFromJointTransform)
-        return simd_distance(thumbPos, middlePos)
     }
 
     /// Check if palm is facing down for wall control (finger visibility not required)

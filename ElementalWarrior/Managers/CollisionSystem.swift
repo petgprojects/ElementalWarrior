@@ -7,7 +7,6 @@
 //
 
 import ARKit
-import RealityKit
 import simd
 
 // MARK: - Collision System
@@ -60,63 +59,6 @@ enum CollisionSystem {
         }
 
         return closestHit
-    }
-
-    // MARK: - Scene Collision
-
-    /// Raycast a continuous beam against RealityKit collision shapes.
-    static func raycastScene(
-        scene: Scene,
-        origin: SIMD3<Float>,
-        direction: SIMD3<Float>,
-        maxDistance: Float,
-        mask: CollisionGroup,
-        minDistance: Float = 0.02,
-        relativeTo referenceEntity: Entity? = nil
-    ) -> HitResult? {
-        let hits = scene.raycast(
-            origin: origin,
-            direction: direction,
-            length: maxDistance,
-            query: .all,
-            mask: mask,
-            relativeTo: referenceEntity
-        )
-        var closestHit: CollisionCastHit?
-        var closestDistance = maxDistance
-        for hit in hits where hit.distance > minDistance && hit.distance < closestDistance {
-            closestDistance = hit.distance
-            closestHit = hit
-        }
-        guard let resolved = closestHit else { return nil }
-        return HitResult(position: resolved.position, normal: resolved.normal)
-    }
-
-    /// Raycast between two points against RealityKit collision shapes.
-    static func raycastScene(
-        scene: Scene,
-        from startPosition: SIMD3<Float>,
-        to endPosition: SIMD3<Float>,
-        mask: CollisionGroup,
-        minDistance: Float = 0.02,
-        relativeTo referenceEntity: Entity? = nil
-    ) -> HitResult? {
-        let hits = scene.raycast(
-            from: startPosition,
-            to: endPosition,
-            query: .all,
-            mask: mask,
-            relativeTo: referenceEntity
-        )
-        let maxDistance = simd_distance(startPosition, endPosition)
-        var closestHit: CollisionCastHit?
-        var closestDistance = maxDistance
-        for hit in hits where hit.distance > minDistance && hit.distance < closestDistance {
-            closestDistance = hit.distance
-            closestHit = hit
-        }
-        guard let resolved = closestHit else { return nil }
-        return HitResult(position: resolved.position, normal: resolved.normal)
     }
 
     /// Raycast a continuous beam (e.g., flamethrower) against cached mesh geometry.

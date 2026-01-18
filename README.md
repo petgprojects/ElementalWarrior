@@ -21,6 +21,8 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **Home Interface**: Frosted glass home window with Start/Quit controls and a Debug shortcut
 - **Debug Tutorials**: In-debug tutorial player with looping hand-animation previews for fireball, flamethrower, and wall gestures
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
+- **Thunderdome Environment**: USDZ immersive arena with environment collision and a positioning window (X/Y/Z sliders + snap-to-floor)
+- **Teleport Locomotion**: Middle-finger + thumb tap to place a blue marker, steer with gaze + hand fine-tuning, tap again to slide within the thunderdome
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming
 - **Scene Reconstruction**: Real-world surface detection with persistent mesh caching for fireball collisions
@@ -31,6 +33,7 @@ The goal is to create an intuitive, gesture-based combat system where:
   - Both hands work independently and simultaneously
   - Intent-based gesture system with delayed despawn (1.5s grace period)
   - 2-second tracking loss grace period
+  - Middle-thumb pinch tap for thunderdome teleport targeting
 - **Fire Bending**:
   - Realistic multi-layered fireball particle effects
   - Fireballs appear in open palms and track hand position
@@ -77,6 +80,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 - **Environment Expansion**
   - **Current**: Passthrough mixed reality mode
+  - **Current**: Thunderdome immersive arena (Reality Composer Pro USDZ) with passthrough height calibration before loading
   - **Planned**: Themed battle arenas (fire temple, water oasis, earth cavern, air temple)
 
 - **Progression System**
@@ -97,7 +101,9 @@ The goal is to create an intuitive, gesture-based combat system where:
 
 #### App Structure (`ElementalWarriorApp.swift`)
 - `WindowGroup` ("home"): Main home window with menu interface
+- `WindowGroup` ("thunderdomePosition"): Slider window for positioning the thunderdome environment
 - `ImmersiveSpace` ("arena"): Full immersive environment using `.mixed` immersion style
+- `ImmersiveSpace` ("thunderdome"): Thunderdome environment using `.full` immersion style
 - Supports simultaneous window and immersive space display
 
 #### Views
@@ -105,6 +111,8 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **HomeView** (`HomeView.swift`): Entry point with frosted glass home UI, Start/Quit controls, and Debug shortcut
 - **DebugWindowView** (`DebugWindowView.swift`): Sidebar-tabbed debug window for hand state, room scanning, tutorial playback, and tuning options
 - **ArenaImmersiveView** (`ArenaImmersiveView.swift`): Immersive passthrough environment with hand tracking
+- **ThunderdomeImmersiveView** (`ThunderdomeImmersiveView.swift`): Immersive USDZ environment with hand tracking
+- **ThunderdomePositionWindowView** (`ThunderdomePositionWindowView.swift`): Slider window for moving the thunderdome relative to the user
 
 #### Hand Tracking System (Managers/)
 
@@ -120,6 +128,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **ScorchMarkEffects**: Procedural scorch marks with ember glow animation
 - **FlamethrowerEffects**: Multi-layer flamethrower stream with configurable muzzle and jet intensity for single/combined modes
 - **FireWallEffects**: Ember line placement and wall of fire sheet emitters with highlight palettes
+- **TeleportEffects**: Gaze-based teleport marker visuals
 
 #### State Management
 
@@ -158,10 +167,13 @@ ElementalWarrior/
 │   ├── AppModel.swift                  # App-wide state management
 │   ├── HomeView.swift                  # Main menu interface
 │   ├── ArenaImmersiveView.swift        # Immersive view setup
+│   ├── ThunderdomeImmersiveView.swift  # Thunderdome immersive environment
+│   ├── ThunderdomePositionWindowView.swift # Thunderdome position sliders
 │   ├── TutorialsDebugView.swift        # Debug tutorial player UI
 │   ├── Info.plist                      # App permissions (hand/world sensing)
 │   ├── Managers/
 │   │   ├── HandTrackingManager.swift   # Central hand tracking orchestrator
+│   │   ├── ThunderdomeManager.swift    # Thunderdome loading + positioning
 │   │   ├── TutorialPlaybackManager.swift # Tutorial animation playback and VFX previews
 │   │   ├── GestureTypes.swift          # Shared types and constants
 │   │   ├── GestureSettings.swift       # Tunable gesture constants for the debug window
@@ -172,7 +184,8 @@ ElementalWarrior/
 │       ├── ExplosionEffects.swift      # Explosion particle effects
 │       ├── ScorchMarkEffects.swift     # Procedural scorch marks
 │       ├── FlamethrowerEffects.swift   # Flamethrower stream effects
-│       └── FireWallEffects.swift       # Wall of fire and ember line effects
+│       ├── FireWallEffects.swift       # Wall of fire and ember line effects
+│       └── TeleportEffects.swift       # Teleport marker visuals
 ├── RealityAssetStuff/                  # Reality Composer Pro project (experimental)
 ├── CLAUDE.md                           # Developer guidance for AI assistants
 └── ElementalWarrior.xcodeproj/         # Xcode project

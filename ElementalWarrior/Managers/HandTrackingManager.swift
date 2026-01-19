@@ -28,6 +28,7 @@ final class HandTrackingManager {
     var collisionMode: CollisionMode = .sceneReconstruction
     var latestDeviceTransform: simd_float4x4?
     var teleportHandler: ((SIMD3<Float>, simd_float4x4?) -> Void)?
+    var wallAnchorEntity: Entity?
 
     private struct HandPoseSnapshot {
         var palmPosition: SIMD3<Float> = .zero
@@ -169,6 +170,7 @@ final class HandTrackingManager {
     private var rightMiddlePinchSnapshot = PinchSnapshot()
     private var isZombiePoseActive: Bool = false
     private var lastZombiePoseTime: TimeInterval = 0
+    private var lastWallConfirmTime: TimeInterval = -Double.greatestFiniteMagnitude
     private var isTeleportArmed: Bool = false
     private var teleportIndicator: Entity?
     private var teleportTargetPosition: SIMD3<Float>?
@@ -2188,7 +2190,7 @@ final class HandTrackingManager {
         fallbackBaseHeight: Float,
         fallbackWallHeight: Float
     ) -> Float {
-        guard let pose = getDevicePose(deviceTransform: deviceTransform) else {
+        guard let pose = wallSpacePose(deviceTransform: deviceTransform) else {
             let heightDelta = (avgHandHeight - fallbackBaseHeight) * GestureConstants.wallHeightScale
             return clamp(
                 fallbackWallHeight + heightDelta,
@@ -2277,12 +2279,14 @@ final class HandTrackingManager {
 
         if didConfirm {
             if let placement = emberPlacement {
+                lastWallConfirmTime = now
                 await fadeOutEmberPlacement(placement)
                 emberPlacement = nil
                 clearWallSelection(resetPalette: wallEdit == nil)
                 return
             }
             if wallEdit != nil {
+                lastWallConfirmTime = now
                 await confirmWallEdit()
                 return
             }
@@ -2313,6 +2317,13 @@ final class HandTrackingManager {
             return
         }
 
+        if now - lastWallConfirmTime < GestureConstants.wallRearmCooldownDuration {
+            if !isHoldingFists {
+                clearWallSelection(resetPalette: true)
+            }
+            return
+        }
+
         guard poseActive else { return }
 
         if let wallID = selectWallByGaze(deviceTransform: deviceTransform) {
@@ -2329,8 +2340,8 @@ final class HandTrackingManager {
     private func updateEmberPlacement(placement: EmberPlacementState, deviceTransform: simd_float4x4?) async {
         var placement = placement
 
-        let leftPos = leftPoseSnapshot.palmPosition
-        let rightPos = rightPoseSnapshot.palmPosition
+        let leftPos = wallSpacePosition(leftPoseSnapshot.palmPosition)
+        let rightPos = wallSpacePosition(rightPoseSnapshot.palmPosition)
         let midpoint = (leftPos + rightPos) * 0.5
         if let pose = getDevicePose(deviceTransform: deviceTransform) {
             let deltaForward = simd_dot(rightPos - leftPos, pose.forward)
@@ -2414,7 +2425,7 @@ final class HandTrackingManager {
         wallState.audioEntity?.name = "FireWallAudio"
         if let audioEntity = wallState.audioEntity {
             audioEntity.position = wallState.basePosition
-            rootEntity.addChild(audioEntity)
+            wallRootEntity.addChild(audioEntity)
             if let crackle = crackleSound {
                 let controller = audioEntity.playAudio(crackle)
                 controller.gain = -80
@@ -2424,13 +2435,13 @@ final class HandTrackingManager {
         }
         syncWallVisuals(wall: &wallState)
 
-        rootEntity.addChild(wallState.visual.root)
+        wallRootEntity.addChild(wallState.visual.root)
         fireWalls[wallID] = wallState
 
-        let leftPos = leftPoseSnapshot.palmPosition
-        let rightPos = rightPoseSnapshot.palmPosition
+        let leftPos = wallSpacePosition(leftPoseSnapshot.palmPosition)
+        let rightPos = wallSpacePosition(rightPoseSnapshot.palmPosition)
         let separation = abs(simd_dot(rightPos - leftPos, placement.lineDirection))
-        let baseForwardOffset = getDevicePose(deviceTransform: deviceTransform).map {
+        let baseForwardOffset = wallSpacePose(deviceTransform: deviceTransform).map {
             simd_dot(rightPos - leftPos, $0.forward)
         } ?? 0
 
@@ -2455,10 +2466,10 @@ final class HandTrackingManager {
 
     private func startWallEdit(wallID: UUID, deviceTransform: simd_float4x4?) {
         guard let wall = fireWalls[wallID], !wall.isCollapsing else { return }
-        let leftPos = leftPoseSnapshot.palmPosition
-        let rightPos = rightPoseSnapshot.palmPosition
+        let leftPos = wallSpacePosition(leftPoseSnapshot.palmPosition)
+        let rightPos = wallSpacePosition(rightPoseSnapshot.palmPosition)
         let separation = abs(simd_dot(rightPos - leftPos, wall.lineDirection))
-        let baseForwardOffset = getDevicePose(deviceTransform: deviceTransform).map {
+        let baseForwardOffset = wallSpacePose(deviceTransform: deviceTransform).map {
             simd_dot(rightPos - leftPos, $0.forward)
         } ?? 0
         let avgHeight = (leftPos.y + rightPos.y) * 0.5
@@ -2485,11 +2496,11 @@ final class HandTrackingManager {
             return
         }
 
-        let leftPos = leftPoseSnapshot.palmPosition
-        let rightPos = rightPoseSnapshot.palmPosition
+        let leftPos = wallSpacePosition(leftPoseSnapshot.palmPosition)
+        let rightPos = wallSpacePosition(rightPoseSnapshot.palmPosition)
         let midpoint = (leftPos + rightPos) * 0.5
 
-        let forwardOffset = getDevicePose(deviceTransform: deviceTransform).map {
+        let forwardOffset = wallSpacePose(deviceTransform: deviceTransform).map {
             simd_dot(rightPos - leftPos, $0.forward)
         } ?? edit.baseForwardOffset
         let rotationAngle = clamp(
@@ -2560,15 +2571,17 @@ final class HandTrackingManager {
     }
 
     private func startEmberPlacement(hit: CollisionSystem.HitResult, deviceTransform: simd_float4x4?) {
-        guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return }
+        guard let pose = wallSpacePose(deviceTransform: deviceTransform) else { return }
 
+        let planeNormal = wallSpaceNormal(hit.normal)
+        let hitPosition = wallSpacePosition(hit.position)
         let baseLineDirection = computeLineDirection(
-            planeNormal: hit.normal,
+            planeNormal: planeNormal,
             deviceForward: pose.forward,
             deviceRight: pose.right
         )
-        let leftPos = leftPoseSnapshot.palmPosition
-        let rightPos = rightPoseSnapshot.palmPosition
+        let leftPos = wallSpacePosition(leftPoseSnapshot.palmPosition)
+        let rightPos = wallSpacePosition(rightPoseSnapshot.palmPosition)
         let deltaForward = simd_dot(rightPos - leftPos, pose.forward)
         let rotationAngle = clamp(
             deltaForward * GestureConstants.wallPlacementRotationScale,
@@ -2577,7 +2590,7 @@ final class HandTrackingManager {
         )
         let lineDirection = rotate(
             direction: baseLineDirection,
-            around: hit.normal,
+            around: planeNormal,
             angle: rotationAngle
         )
         let midpoint = (leftPos + rightPos) * 0.5
@@ -2591,25 +2604,25 @@ final class HandTrackingManager {
         let avgHeight = (leftPos.y + rightPos.y) * 0.5
 
         let visual = createEmberLineEffect(width: width)
-        let placementPosition = hit.position + hit.normal * GestureConstants.wallEmberOffset
+        let placementPosition = hitPosition + planeNormal * GestureConstants.wallEmberOffset
         visual.root.transform = makeBasisTransform(
             position: placementPosition,
             lineDirection: lineDirection,
-            planeNormal: hit.normal
+            planeNormal: planeNormal
         )
-        rootEntity.addChild(visual.root)
+        wallRootEntity.addChild(visual.root)
 
         emberPlacement = EmberPlacementState(
             visual: visual,
-            planeNormal: hit.normal,
+            planeNormal: planeNormal,
             baseLineDirection: baseLineDirection,
             lineDirection: lineDirection,
-            baseCenter: hit.position,
+            baseCenter: hitPosition,
             baseMidpoint: midpoint,
             lastMidpoint: midpoint,
             baseHandHeight: avgHeight,
             currentWidth: width,
-            currentCenter: hit.position
+            currentCenter: hitPosition
         )
     }
 
@@ -2749,7 +2762,7 @@ final class HandTrackingManager {
             wall.audioEntity?.name = "FireWallAudio"
             if let audioEntity = wall.audioEntity {
                 audioEntity.position = wall.basePosition
-                rootEntity.addChild(audioEntity)
+                wallRootEntity.addChild(audioEntity)
                 if let crackle = crackleSound {
                     let controller = audioEntity.playAudio(crackle)
                     controller.gain = -80
@@ -2774,7 +2787,7 @@ final class HandTrackingManager {
             if wall.emberVisual == nil {
                 let emberVisual = createEmberLineEffect(width: wall.width)
                 wall.emberVisual = emberVisual
-                rootEntity.addChild(emberVisual.root)
+                wallRootEntity.addChild(emberVisual.root)
             }
             wall.visual.root.isEnabled = false
             if let emberVisual = wall.emberVisual {
@@ -2831,8 +2844,8 @@ final class HandTrackingManager {
 
     private func selectWallByGaze(deviceTransform: simd_float4x4?) -> UUID? {
         guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return nil }
-        let origin = pose.position
-        let direction = pose.forward
+        let origin = wallSpacePosition(pose.position)
+        let direction = wallSpaceDirection(pose.forward)
 
         var closestID: UUID?
         var closestDistance = GestureConstants.wallSelectionMaxDistance
@@ -2902,6 +2915,34 @@ final class HandTrackingManager {
             deviceTransform.columns.0.y,
             deviceTransform.columns.0.z
         ))
+        return (position, forward, right)
+    }
+
+    private var wallRootEntity: Entity {
+        wallAnchorEntity ?? rootEntity
+    }
+
+    private func wallSpacePosition(_ position: SIMD3<Float>) -> SIMD3<Float> {
+        guard let anchor = wallAnchorEntity else { return position }
+        return anchor.convert(position: position, from: nil)
+    }
+
+    private func wallSpaceDirection(_ direction: SIMD3<Float>) -> SIMD3<Float> {
+        guard let anchor = wallAnchorEntity else { return direction }
+        return simd_normalize(anchor.convert(direction: direction, from: nil))
+    }
+
+    private func wallSpaceNormal(_ normal: SIMD3<Float>) -> SIMD3<Float> {
+        guard let anchor = wallAnchorEntity else { return normal }
+        return simd_normalize(anchor.convert(normal: normal, from: nil))
+    }
+
+    private func wallSpacePose(deviceTransform: simd_float4x4?) -> (position: SIMD3<Float>, forward: SIMD3<Float>, right: SIMD3<Float>)? {
+        guard let pose = getDevicePose(deviceTransform: deviceTransform) else { return nil }
+        guard let anchor = wallAnchorEntity else { return pose }
+        let position = anchor.convert(position: pose.position, from: nil)
+        let forward = simd_normalize(anchor.convert(direction: pose.forward, from: nil))
+        let right = simd_normalize(anchor.convert(direction: pose.right, from: nil))
         return (position, forward, right)
     }
 

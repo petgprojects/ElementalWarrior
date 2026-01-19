@@ -48,6 +48,7 @@ final class GestureSettings {
     var zombiePoseUpdateWindow: Double { didSet { GestureConstants.zombiePoseUpdateWindow = zombiePoseUpdateWindow } }
     var wallControlGraceDuration: Double { didSet { GestureConstants.wallControlGraceDuration = wallControlGraceDuration } }
     var wallConfirmHoldDuration: Double { didSet { GestureConstants.wallConfirmHoldDuration = wallConfirmHoldDuration } }
+    var wallRearmCooldownDuration: Double { didSet { GestureConstants.wallRearmCooldownDuration = wallRearmCooldownDuration } }
     var wallPlacementMinWidth: Double { didSet { GestureConstants.wallPlacementMinWidth = Float(wallPlacementMinWidth) } }
     var wallPlacementMaxWidth: Double { didSet { GestureConstants.wallPlacementMaxWidth = Float(wallPlacementMaxWidth) } }
     var wallPlacementSmoothing: Double { didSet { GestureConstants.wallPlacementSmoothing = Float(wallPlacementSmoothing) } }
@@ -106,6 +107,7 @@ final class GestureSettings {
         zombiePoseUpdateWindow = GestureConstants.zombiePoseUpdateWindow
         wallControlGraceDuration = GestureConstants.wallControlGraceDuration
         wallConfirmHoldDuration = GestureConstants.wallConfirmHoldDuration
+        wallRearmCooldownDuration = GestureConstants.wallRearmCooldownDuration
         wallPlacementMinWidth = Double(GestureConstants.wallPlacementMinWidth)
         wallPlacementMaxWidth = Double(GestureConstants.wallPlacementMaxWidth)
         wallPlacementSmoothing = Double(GestureConstants.wallPlacementSmoothing)

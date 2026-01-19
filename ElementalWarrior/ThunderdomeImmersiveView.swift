@@ -59,6 +59,7 @@ struct ThunderdomeImmersiveView: View {
         }
         .task {
             print("[ThunderdomeView] Task started")
+            appModel.handTrackingManager.wallAnchorEntity = appModel.thunderdomeManager.rootEntity
             appModel.thunderdomeImmersionStyle = .mixed
             appModel.handTrackingManager.collisionMode = .none
             print("[ThunderdomeView] Calling applyInitialUserHeight...")
@@ -75,6 +76,9 @@ struct ThunderdomeImmersiveView: View {
         }
         .task {
             await appModel.handTrackingManager.startHandTracking()
+        }
+        .onDisappear {
+            appModel.handTrackingManager.wallAnchorEntity = nil
         }
     }
 

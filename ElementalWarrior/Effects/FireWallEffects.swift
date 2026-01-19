@@ -125,6 +125,7 @@ private func makeEmberGlowEmitter(width: Float) -> ParticleEmitterComponent {
     emitter.birthLocation = .volume
     emitter.birthDirection = .local
     emitter.emissionDirection = [0, 1, 0]
+    emitter.particlesInheritTransform = true
 
     emitter.mainEmitter.birthRate = FireWallDefaults.emberBirthRatePerMeter * width
     emitter.mainEmitter.lifeSpan = 0.85
@@ -157,6 +158,7 @@ private func makeEmberSparksEmitter(width: Float) -> ParticleEmitterComponent {
     emitter.birthLocation = .volume
     emitter.birthDirection = .local
     emitter.emissionDirection = [0, 1, 0]
+    emitter.particlesInheritTransform = true
 
     emitter.mainEmitter.birthRate = FireWallDefaults.emberSparkRatePerMeter * width
     emitter.mainEmitter.lifeSpan = 1.0
@@ -422,6 +424,7 @@ private func makeFireWallCoreEmitter(width: Float, height: Float) -> ParticleEmi
     emitter.birthLocation = .volume
     emitter.birthDirection = .local
     emitter.emissionDirection = [0, 1, 0]
+    emitter.particlesInheritTransform = true
 
     emitter.mainEmitter.size = 0.08
     emitter.mainEmitter.sizeVariation = 0.03
@@ -455,6 +458,7 @@ private func makeFireWallBodyEmitter(width: Float, height: Float) -> ParticleEmi
     emitter.birthLocation = .volume
     emitter.birthDirection = .local
     emitter.emissionDirection = [0, 1, 0]
+    emitter.particlesInheritTransform = true
 
     emitter.mainEmitter.size = 0.12
     emitter.mainEmitter.sizeVariation = 0.05
@@ -488,6 +492,7 @@ private func makeFireWallSparksEmitter(width: Float, height: Float) -> ParticleE
     emitter.birthLocation = .volume
     emitter.birthDirection = .local
     emitter.emissionDirection = [0, 1, 0]
+    emitter.particlesInheritTransform = true
 
     emitter.mainEmitter.size = 0.03
     emitter.mainEmitter.sizeVariation = 0.02
@@ -521,6 +526,7 @@ private func makeFireWallSmokeEmitter(width: Float, height: Float) -> ParticleEm
     emitter.birthLocation = .volume
     emitter.birthDirection = .local
     emitter.emissionDirection = [0, 1, 0]
+    emitter.particlesInheritTransform = true
 
     emitter.mainEmitter.size = 0.15
     emitter.mainEmitter.sizeVariation = 0.08

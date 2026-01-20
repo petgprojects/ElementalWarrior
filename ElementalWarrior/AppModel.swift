@@ -29,6 +29,7 @@ class AppModel {
     // Shared hand tracking manager for debug visibility
     let handTrackingManager = HandTrackingManager()
     let thunderdomeManager = ThunderdomeManager()
+    let enemyManager = EnemyManager()
 
     let gestureSettings = GestureSettings()
     let tutorialPlaybackManager = TutorialPlaybackManager()

@@ -22,6 +22,7 @@ The goal is to create an intuitive, gesture-based combat system where:
 - **Debug Tutorials**: In-debug tutorial player with looping hand-animation previews for fireball, flamethrower, and wall gestures
 - **Immersive Arena**: Full passthrough mixed reality environment for combat (no floor plane)
 - **Thunderdome Environment**: USDZ immersive arena with environment collision and a positioning window (X/Y/Z sliders + snap-to-floor)
+- **Thunderdome Enemy Prototype**: Basic enemy with idle/walk/punch loop driven by USDZ animations
 - **Teleport Locomotion**: Middle-finger + thumb tap to place a blue marker, steer with gaze + hand fine-tuning, tap again to slide within the thunderdome
 - **Hand Tracking**: Real-time ARKit hand skeleton tracking for both left and right hands
 - **World Tracking**: Device pose tracking for gaze-based aiming

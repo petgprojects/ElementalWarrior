@@ -71,6 +71,8 @@ struct ThunderdomeImmersiveView: View {
                 print("[ThunderdomeView] Setting collision mode and immersion style")
                 appModel.handTrackingManager.collisionMode = .thunderdome
                 appModel.thunderdomeImmersionStyle = .full
+                appModel.enemyManager.attach(to: appModel.thunderdomeManager.rootEntity)
+                appModel.enemyManager.start()
                 print("[ThunderdomeView] Task complete!")
             }
         }
@@ -79,6 +81,7 @@ struct ThunderdomeImmersiveView: View {
         }
         .onDisappear {
             appModel.handTrackingManager.wallAnchorEntity = nil
+            appModel.enemyManager.stop()
         }
     }
 

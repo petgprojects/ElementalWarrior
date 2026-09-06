@@ -3,8 +3,7 @@
     "objectMetadataList" : [
       [
         "00D6D24A-916E-434B-9C71-04328E5AB994",
-        "root",
-        "Sphere"
+        "root"
       ],
       {
         "isExpanded" : true,
@@ -12,7 +11,8 @@
       },
       [
         "00D6D24A-916E-434B-9C71-04328E5AB994",
-        "root"
+        "root",
+        "Sphere"
       ],
       {
         "isExpanded" : true,
@@ -45,16 +45,8 @@
     "objectMetadataList" : [
       [
         "163C88A6-8DB6-468B-B494-FBC3F723BE53",
-        "root"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
         "root",
-        "Plane"
+        "skybox"
       ],
       {
         "isExpanded" : true,
@@ -72,24 +64,6 @@
       [
         "163C88A6-8DB6-468B-B494-FBC3F723BE53",
         "root",
-        "Sphere_1"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
-        "root",
-        "skybox"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
-        "root",
         "dome"
       ],
       {
@@ -99,7 +73,45 @@
       [
         "163C88A6-8DB6-468B-B494-FBC3F723BE53",
         "root",
+        "Plane"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
+        "root",
+        "Sphere_1"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
+        "root",
         "Sphere"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "163C88A6-8DB6-468B-B494-FBC3F723BE53",
+        "root"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      }
+    ]
+  },
+  "26EE56AC-A3DD-4B04-BDD2-1980E7443451" : {
+    "objectMetadataList" : [
+      [
+        "26EE56AC-A3DD-4B04-BDD2-1980E7443451",
+        "root"
       ],
       {
         "isExpanded" : true,
@@ -123,7 +135,25 @@
     "objectMetadataList" : [
       [
         "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
+        "dome"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
         "root"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
+        "root",
+        "Plane"
       ],
       {
         "isExpanded" : true,
@@ -141,25 +171,7 @@
       [
         "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
         "root",
-        "dome"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
         "skybox"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "50B39E4B-A8D6-44F7-9D89-678CBAF055B6",
-        "root",
-        "Plane"
       ],
       {
         "isExpanded" : true,
@@ -208,15 +220,6 @@
       [
         "901BFCC2-6F40-48A1-B067-C6210A64F955",
         "root",
-        "Sphere"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "901BFCC2-6F40-48A1-B067-C6210A64F955",
-        "root",
         "_materials"
       ],
       {
@@ -230,6 +233,15 @@
       {
         "isExpanded" : true,
         "isLocked" : false
+      },
+      [
+        "901BFCC2-6F40-48A1-B067-C6210A64F955",
+        "root",
+        "Sphere"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
       }
     ]
   },
@@ -237,26 +249,26 @@
     "objectMetadataList" : [
       [
         "94736396-C2FE-443C-9A35-F864DAEA5ABF",
+        "root"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "94736396-C2FE-443C-9A35-F864DAEA5ABF",
+        "root",
+        "Armature"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "94736396-C2FE-443C-9A35-F864DAEA5ABF",
         "root",
         "Armature",
         "Armature"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "94736396-C2FE-443C-9A35-F864DAEA5ABF",
-        "root",
-        "Armature"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "94736396-C2FE-443C-9A35-F864DAEA5ABF",
-        "root"
       ],
       {
         "isExpanded" : true,
@@ -289,7 +301,8 @@
     "objectMetadataList" : [
       [
         "B3A684A8-D3DD-4A23-BB35-9205517E93D3",
-        "root"
+        "root",
+        "Plane"
       ],
       {
         "isExpanded" : true,
@@ -297,8 +310,7 @@
       },
       [
         "B3A684A8-D3DD-4A23-BB35-9205517E93D3",
-        "root",
-        "Plane"
+        "root"
       ],
       {
         "isExpanded" : true,
@@ -361,8 +373,7 @@
     "objectMetadataList" : [
       [
         "F192C361-C0C3-48D0-8D4B-221028949E3C",
-        "root",
-        "dome_1"
+        "root"
       ],
       {
         "isExpanded" : true,
@@ -370,7 +381,8 @@
       },
       [
         "F192C361-C0C3-48D0-8D4B-221028949E3C",
-        "root"
+        "root",
+        "skybox"
       ],
       {
         "isExpanded" : true,
@@ -388,15 +400,6 @@
       [
         "F192C361-C0C3-48D0-8D4B-221028949E3C",
         "root",
-        "Plane"
-      ],
-      {
-        "isExpanded" : true,
-        "isLocked" : false
-      },
-      [
-        "F192C361-C0C3-48D0-8D4B-221028949E3C",
-        "root",
         "dome"
       ],
       {
@@ -406,7 +409,16 @@
       [
         "F192C361-C0C3-48D0-8D4B-221028949E3C",
         "root",
-        "skybox"
+        "Plane"
+      ],
+      {
+        "isExpanded" : true,
+        "isLocked" : false
+      },
+      [
+        "F192C361-C0C3-48D0-8D4B-221028949E3C",
+        "root",
+        "dome_1"
       ],
       {
         "isExpanded" : true,

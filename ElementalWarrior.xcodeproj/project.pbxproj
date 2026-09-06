@@ -8,14 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		062D62CE2F043EC50076B942 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = 062D62CD2F043EC50076B942 /* RealityKitContent */; };
-		06CFC3EF2F14265E00E3F641 /* thunderdome_final.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 06CFC3EE2F14265E00E3F641 /* thunderdome_final.usdz */; };
 		06EBE6CC2F09E8CA00714ECB /* WarriorIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 06EBE6CB2F09E8CA00714ECB /* WarriorIcon.icon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		062D62C82F043EC50076B942 /* ElementalWarrior.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ElementalWarrior.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		062D62CC2F043EC50076B942 /* RealityKitContent */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = RealityKitContent; sourceTree = "<group>"; };
-		06CFC3EE2F14265E00E3F641 /* thunderdome_final.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = thunderdome_final.usdz; sourceTree = "<group>"; };
 		06EBE6CB2F09E8CA00714ECB /* WarriorIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = WarriorIcon.icon; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -55,7 +53,6 @@
 		062D62BF2F043EC50076B942 = {
 			isa = PBXGroup;
 			children = (
-				06CFC3EE2F14265E00E3F641 /* thunderdome_final.usdz */,
 				062D62CA2F043EC50076B942 /* ElementalWarrior */,
 				062D62CB2F043EC50076B942 /* Packages */,
 				062D62C92F043EC50076B942 /* Products */,
@@ -144,7 +141,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				06CFC3EF2F14265E00E3F641 /* thunderdome_final.usdz in Resources */,
 				06EBE6CC2F09E8CA00714ECB /* WarriorIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

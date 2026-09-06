@@ -6,10 +6,10 @@
     "thunderdome\/thunderdome_working_3.usda",
     "thunderdome\/thunderdome.usda",
     "thunderdome\/thunderdome_small.usda",
-    "character\/main.usda",
     "character\/idle_fight_punch_idle.usda",
     "character\/walk.usda",
-    "character\/idle.usda"
+    "character\/idle.usda",
+    "character\/idle_to_walk.usda"
   ],
   "recentIdentifiers" : {
     "163C88A6-8DB6-468B-B494-FBC3F723BE53" : [
@@ -515,6 +515,52 @@
           3.9820306,
           3.0462966,
           -11.00472,
+          1
+        ]
+      }
+    ],
+    "26EE56AC-A3DD-4B04-BDD2-1980E7443451" : [
+      {
+        "date" : 790543075.386982,
+        "title" : "Untitled",
+        "transform" : [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0.7071069,
+          -0.70710677,
+          0,
+          0,
+          0.70710677,
+          0.7071069,
+          0,
+          -0.10224661,
+          2.343661,
+          3.369012,
+          1
+        ]
+      },
+      {
+        "date" : 790542963.702164,
+        "title" : "Untitled",
+        "transform" : [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0.7071069,
+          -0.70710677,
+          0,
+          0,
+          0.70710677,
+          0.7071069,
+          0,
+          0,
+          2.8563364,
+          2.8563368,
           1
         ]
       }
